@@ -9,14 +9,23 @@ import sys
 
 import faiss
 from sentence_transformers import SentenceTransformer
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 INDEX_FILE = "data/index.faiss"
 META_FILE = "data/docs.pkl"
 EMB_MODEL = "all-MiniLM-L6-v2"
-GEN_MODEL = "google/flan-t5-small"  # troque para "google/flan-t5-base" p/ mais qualidade (mais lento em CPU)
+
+# Qwen2.5-1.5B-Instruct: modelo multilíngue de verdade (bem melhor em
+# português que o FLAN-T5, que é treinado majoritariamente em inglês).
+# ~3GB de download na primeira vez; roda em CPU, mas é mais lento que o
+# flan-t5-small. Se seu PC for fraco, veja a alternativa comentada abaixo.
+GEN_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+
+# Alternativa mais leve (menor qualidade em português, mas mais rápida):
+# GEN_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
 TOP_K = 4  # quantos trechos recuperar por pergunta
+MAX_NEW_TOKENS = 400
 
 
 def carregar_recursos():
@@ -36,12 +45,36 @@ def carregar_recursos():
     print(f"Carregando modelo de embeddings ({EMB_MODEL})...")
     embedder = SentenceTransformer(EMB_MODEL)
 
-    print(f"Carregando modelo de geração ({GEN_MODEL})...")
+    print(f"Carregando modelo de geração ({GEN_MODEL})... (pode demorar na 1ª vez)")
     tokenizer = AutoTokenizer.from_pretrained(GEN_MODEL)
-    model = AutoModelForSeq2SeqLM.from_pretrained(GEN_MODEL)
-    generator = pipeline("text2text-generation", model=model, tokenizer=tokenizer, device=-1)
+    model = AutoModelForCausalLM.from_pretrained(GEN_MODEL)
+    model.eval()
 
-    return index, embedder, generator, meta["texts"], meta["metas"]
+    return index, embedder, (tokenizer, model), meta["texts"], meta["metas"]
+
+
+def gerar_resposta(gen_bundle, prompt: str, max_new_tokens: int = MAX_NEW_TOKENS) -> str:
+    """Gera texto usando um modelo causal via chat template (mais robusto e
+    com muito mais qualidade em português do que os antigos FLAN-T5)."""
+    tokenizer, model = gen_bundle
+
+    mensagens = [{"role": "user", "content": prompt}]
+    entrada_formatada = tokenizer.apply_chat_template(
+        mensagens, tokenize=False, add_generation_prompt=True
+    )
+    entradas = tokenizer(entrada_formatada, return_tensors="pt", truncation=True, max_length=4096)
+
+    saida = model.generate(
+        **entradas,
+        max_new_tokens=max_new_tokens,
+        do_sample=False,
+        pad_token_id=tokenizer.eos_token_id,
+    )
+
+    # Pega só os tokens gerados a mais (a resposta), sem repetir o prompt
+    tokens_novos = saida[0][entradas["input_ids"].shape[1]:]
+    texto = tokenizer.decode(tokens_novos, skip_special_tokens=True)
+    return texto.strip()
 
 
 def retrieve(index, embedder, texts, metas, query: str, k: int = TOP_K):
@@ -64,16 +97,13 @@ def build_prompt(contexts, question: str) -> str:
     ctx = "\n\n".join(blocos)
 
     prompt = (
-        "Você é um assistente que responde SOMENTE com base nos trechos abaixo.\n"
-        "Regras:\n"
-        "- Responda em português, de forma objetiva.\n"
-        "- Cite a fonte entre colchetes (ex: [nome.pdf - página 3]) sempre que usar um trecho.\n"
-        "- Se os trechos não contiverem a informação necessária para responder, "
-        "diga claramente que não encontrou essa informação nos documentos — "
-        "não invente uma resposta.\n\n"
-        f"Trechos:\n{ctx}\n\n"
-        f"Pergunta: {question}\n"
-        "Resposta:"
+        "Responda à pergunta abaixo em português, usando apenas as informações "
+        "dos trechos fornecidos. Seja objetivo e cite a fonte entre colchetes "
+        "(ex: [nome.pdf - página 3]) quando usar um trecho. Se os trechos não "
+        "tiverem a informação necessária, diga que não encontrou isso nos "
+        "documentos — não invente.\n\n"
+        f"### Trechos\n{ctx}\n\n"
+        f"### Pergunta\n{question}"
     )
     return prompt
 
@@ -91,7 +121,7 @@ def formatar_fontes(contexts) -> str:
 
 
 def chat_loop():
-    index, embedder, generator, texts, metas = carregar_recursos()
+    index, embedder, gen_bundle, texts, metas = carregar_recursos()
 
     print("\nChat iniciado. Digite 'sair' para encerrar.\n")
     while True:
@@ -115,7 +145,7 @@ def chat_loop():
 
         prompt = build_prompt(contexts, q)
         try:
-            resp = generator(prompt, max_length=256, do_sample=False)[0]["generated_text"]
+            resp = gerar_resposta(gen_bundle, prompt)
         except Exception as e:
             print(f"\n[erro ao gerar resposta] {e}\n")
             continue
