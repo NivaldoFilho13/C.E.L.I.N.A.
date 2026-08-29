@@ -1,0 +1,11 @@
+pypdf
+sentence-transformers
+faiss-cpu
+transformers
+torch
+tqdm
+
+# Dica: se "pip install torch" baixar uma versão muito grande (com suporte
+# a GPU que você não vai usar), instale a versão CPU-only primeiro com:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# e depois rode "pip install -r requirements.txt" normalmente.
