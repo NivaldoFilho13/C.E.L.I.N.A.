@@ -1,4 +1,4 @@
-#C.E.L.I.N.A.
+# C.E.L.I.N.A.
 
 Pipeline simples e gratuito para criar um chatbot que responde perguntas
 sobre o conteúdo dos seus PDFs em português, usando RAG
