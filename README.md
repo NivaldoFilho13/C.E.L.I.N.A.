@@ -1,4 +1,4 @@
-# C.E.L.I.N.A. 
+#C.E.L.I.N.A.
 
 Pipeline simples e gratuito para criar um chatbot que responde perguntas
 sobre o conteúdo dos seus PDFs em português, usando RAG
@@ -81,13 +81,21 @@ python build_index.py
 ```
 Saída: `data/index.faiss` e `data/docs.pkl`.
 
-4) Conversar:
+4) Conversar (terminal):
 ```bash
 python chat.py
 ```
 - Digite perguntas em português.
 - Cada resposta mostra as fontes (PDF + página) usadas.
 - Para sair, digite `sair`, `exit` ou `quit`.
+
+5) Ou conversar pela interface web (recomendado):
+```bash
+streamlit run app.py
+```
+Isso abre automaticamente uma aba no seu navegador com um chat visual —
+com histórico da conversa na tela e as fontes de cada resposta num menu
+expansível. Para encerrar, feche a aba e pressione `Ctrl+C` no terminal.
 
 ## Opções de modelo (trocas rápidas)
 
