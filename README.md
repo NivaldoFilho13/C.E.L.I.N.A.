@@ -1,4 +1,4 @@
-# C.E.L.I.N.A.
+# RAG Chat sobre PDFs (em Português) — Pipeline CPU grátis
 
 Pipeline simples e gratuito para criar um chatbot que responde perguntas
 sobre o conteúdo dos seus PDFs em português, usando RAG
@@ -6,9 +6,13 @@ sobre o conteúdo dos seus PDFs em português, usando RAG
 
 Resumo rápido
 - Coloque seus PDFs em `pdfs/`.
-- Rode `python extract_pdfs.py` → gera `data/documents.jsonl`.
+- Rode `python extract_pdfs.py` → gera `data/documents.jsonl` e `data/images/`.
 - Rode `python build_index.py` → cria `data/index.faiss` e `data/docs.pkl`.
-- Rode `python chat.py` → inicie o chat em português.
+- Rode `python chat.py` (terminal) ou `streamlit run app.py` (interface web).
+
+> **Se você já tinha rodado `extract_pdfs.py` numa versão anterior**, rode-o
+> de novo — é nele que as imagens são extraídas pela primeira vez. Não
+> precisa mexer nos PDFs, só rodar o script de novo.
 
 ## O que foi melhorado nesta versão
 
@@ -26,6 +30,13 @@ Resumo rápido
 - **Tratamento de erros**: os três scripts agora avisam claramente quando
   faltam PDFs, o índice não foi gerado ainda, um PDF está corrompido, ou
   uma página não tem texto extraível (provavelmente escaneada).
+- **Interface web (`app.py`)**: chat visual local via Streamlit, com
+  histórico de conversa e fontes num menu expansível.
+- **Imagens ilustrativas**: `extract_pdfs.py` agora também extrai as
+  figuras/diagramas embutidos em cada página do PDF (ignorando ícones
+  pequenos, como marcadores de lista). Quando uma resposta usa uma página
+  que tem imagens, elas aparecem junto com a resposta na interface web
+  (no terminal, o caminho do arquivo é mostrado em texto).
 
 Requisitos
 - Python 3.8+
