@@ -1,4 +1,4 @@
-# RAG Chat sobre PDFs (em Português) — Pipeline CPU grátis
+# C.E.L.I.N.A.
 
 Pipeline simples e gratuito para criar um chatbot que responde perguntas
 sobre o conteúdo dos seus PDFs em português, usando RAG
@@ -32,6 +32,9 @@ Resumo rápido
   uma página não tem texto extraível (provavelmente escaneada).
 - **Interface web (`app.py`)**: chat visual local via Streamlit, com
   histórico de conversa e fontes num menu expansível.
+- **Identidade visual própria**: logo da Celina, banner de cabeçalho e um
+  tema de cores (roxo/azul escuro) aplicados na interface web — veja
+  `assets/` e `.streamlit/config.toml`.
 - **Imagens ilustrativas**: `extract_pdfs.py` agora também extrai as
   figuras/diagramas embutidos em cada página do PDF (ignorando ícones
   pequenos, como marcadores de lista). Quando uma resposta usa uma página
@@ -123,6 +126,20 @@ expansível. Para encerrar, feche a aba e pressione `Ctrl+C` no terminal.
   - Ajuste `CHUNK_SIZE` e `CHUNK_OVERLAP` no topo de `extract_pdfs.py`
     conforme o tipo de documento (textos mais técnicos costumam se
     beneficiar de chunks menores).
+
+## Identidade visual
+
+- `assets/logo.svg` — logo completa (com o nome "Celina"), usada como
+  referência de marca.
+- `assets/logo-emblem.svg` — versão só do emblema (sem texto), usada como
+  ícone da aba do navegador e na barra lateral.
+- `assets/banner.png` — imagem de fundo do cabeçalho da interface web.
+- `.streamlit/config.toml` — define as cores do tema (roxo/azul escuro)
+  usadas em toda a interface (botões, fundo, texto).
+
+Para trocar a logo ou o banner, basta substituir os arquivos em `assets/`
+mantendo os mesmos nomes — a interface lê esses arquivos automaticamente
+ao iniciar.
 
 ## Melhorias futuras possíveis
 
