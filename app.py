@@ -1,6 +1,6 @@
 import streamlit as st
 
-from chat import build_prompt, carregar_recursos, gerar_resposta, retrieve
+from chat import build_prompt, carregar_recursos, gerar_resposta, obter_imagens_dos_contextos, retrieve
 
 TOP_K = 4
 
@@ -17,7 +17,7 @@ def main() -> None:
     st.caption("Chat sobre seus PDFs, rodando localmente no seu PC.")
 
     try:
-        index, embedder, gen_bundle, texts, metas = carregar()
+        index, embedder, gen_bundle, texts, metas, indice_imagens = carregar()
     except SystemExit:
         st.error(
             "Índice não encontrado. Antes de usar a interface, rode no terminal, "
@@ -34,6 +34,11 @@ def main() -> None:
     for msg in st.session_state.historico:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if msg.get("imagens"):
+                cols = st.columns(min(len(msg["imagens"]), 3))
+                for i, caminho in enumerate(msg["imagens"]):
+                    with cols[i % len(cols)]:
+                        st.image(caminho, use_container_width=True)
             if msg.get("fontes"):
                 with st.expander("Fontes consultadas"):
                     for fonte in msg["fontes"]:
@@ -53,6 +58,7 @@ def main() -> None:
                 if not contextos:
                     resposta = "Não encontrei nada relevante nos documentos indexados."
                     fontes = []
+                    imagens = []
                 else:
                     prompt = build_prompt(contextos, pergunta)
                     try:
@@ -69,23 +75,31 @@ def main() -> None:
                         vistos.add(chave)
                         fontes.append(f"{meta['source']} (página {meta['page']}, relevância {score:.2f})")
 
+                    imagens = obter_imagens_dos_contextos(contextos, indice_imagens)
+
             st.markdown(resposta)
+            if imagens:
+                cols = st.columns(min(len(imagens), 3))
+                for i, caminho in enumerate(imagens):
+                    with cols[i % len(cols)]:
+                        st.image(caminho, use_container_width=True)
             if fontes:
                 with st.expander("Fontes consultadas"):
                     for fonte in fontes:
                         st.markdown(f"- {fonte}")
 
         st.session_state.historico.append(
-            {"role": "assistant", "content": resposta, "fontes": fontes}
+            {"role": "assistant", "content": resposta, "fontes": fontes, "imagens": imagens}
         )
 
     with st.sidebar:
         st.subheader("Sobre")
         st.write(
             "O Celina busca os trechos mais relevantes dos seus PDFs e usa um "
-            "modelo local para responder com base neles."
+            "modelo local para responder com base neles, mostrando também "
+            "imagens ilustrativas das páginas usadas quando disponíveis."
         )
-        if st.button("🗑️ Limpar conversa"):
+        if st.button("Limpar conversa"):
             st.session_state.historico = []
             st.rerun()
 
