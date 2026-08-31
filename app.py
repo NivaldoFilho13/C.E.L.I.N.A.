@@ -1,10 +1,123 @@
+import base64
+import os
+
 import streamlit as st
 
 from chat import build_prompt, carregar_recursos, gerar_resposta, obter_imagens_dos_contextos, retrieve
 
 TOP_K = 4
 
-st.set_page_config(page_title="Celina", page_icon="📚", layout="centered")
+ASSETS_DIR = "assets"
+LOGO_PATH = os.path.join(ASSETS_DIR, "logo.svg")
+LOGO_EMBLEMA_PATH = os.path.join(ASSETS_DIR, "logo-emblem.svg")
+BANNER_PATH = os.path.join(ASSETS_DIR, "banner.png")
+
+st.set_page_config(
+    page_title="Celina",
+    page_icon=LOGO_EMBLEMA_PATH if os.path.exists(LOGO_EMBLEMA_PATH) else "📚",
+    layout="centered",
+)
+
+@st.cache_data
+def carregar_como_data_uri(caminho: str) -> str | None:
+    """Lê um arquivo local (svg/png/jpg) e devolve como data URI base64,
+    para poder usá-lo em CSS/HTML sem depender de um servidor de estáticos."""
+    if not os.path.exists(caminho):
+        return None
+
+    ext = os.path.splitext(caminho)[1].lower()
+    tipo_mime = {
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+    }.get(ext, "application/octet-stream")
+
+    with open(caminho, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    return f"data:{tipo_mime};base64,{b64}"
+
+
+def aplicar_estilo() -> None:
+    """Injeta CSS para o cabeçalho (hero banner) e pequenos ajustes visuais."""
+    logo_uri = carregar_como_data_uri(LOGO_EMBLEMA_PATH)
+    banner_uri = carregar_como_data_uri(BANNER_PATH)
+
+    banner_css = (
+        f"background-image: linear-gradient(180deg, rgba(27,16,48,0.35) 0%, "
+        f"rgba(27,16,48,0.92) 100%), url('{banner_uri}');"
+        if banner_uri
+        else "background: linear-gradient(135deg, #1B1030 0%, #3A1A5C 100%);"
+    )
+
+    logo_html = (
+        f'<img src="{logo_uri}" class="celina-hero-logo" />' if logo_uri else "📚"
+    )
+
+    st.markdown(
+        f"""
+        <style>
+        /* Cabeçalho ("hero") com o banner de fundo, a logo e o título */
+        .celina-hero {{
+            {banner_css}
+            background-size: cover;
+            background-position: center 65%;
+            border-radius: 18px;
+            padding: 2.6rem 1.5rem 2rem 1.5rem;
+            text-align: center;
+            margin-bottom: 1.8rem;
+            border: 1px solid rgba(159, 123, 255, 0.25);
+            box-shadow: 0 8px 30px rgba(58, 26, 92, 0.35);
+        }}
+        .celina-hero-logo {{
+            width: 76px;
+            height: 76px;
+            border-radius: 50%;
+            box-shadow: 0 0 24px rgba(159, 123, 255, 0.55);
+            margin-bottom: 0.8rem;
+        }}
+        .celina-hero-title {{
+            font-size: 2.4rem;
+            font-weight: 700;
+            color: #F3EEFF;
+            letter-spacing: 2px;
+            margin: 0;
+        }}
+        .celina-hero-subtitle {{
+            font-size: 0.95rem;
+            color: #C9A8FF;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            margin-top: 0.3rem;
+        }}
+
+        /* Bolhas do chat com leve acento na cor da marca */
+        div[data-testid="stChatMessage"] {{
+            border-radius: 14px;
+            border: 1px solid rgba(159, 123, 255, 0.15);
+        }}
+
+        /* Botões com gradiente da marca */
+        .stButton > button {{
+            background: linear-gradient(135deg, #9F7BFF 0%, #5B8DEF 100%);
+            color: #F3EEFF;
+            border: none;
+            border-radius: 10px;
+        }}
+        .stButton > button:hover {{
+            background: linear-gradient(135deg, #6FD8FF 0%, #9F7BFF 100%);
+            color: #1B1030;
+        }}
+        </style>
+
+        <div class="celina-hero">
+            {logo_html}
+            <div class="celina-hero-title">CELINA</div>
+            <div class="celina-hero-subtitle">Inteligência Artificial · Chat sobre seus PDFs</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 @st.cache_resource(show_spinner="Carregando modelos do Celina... (pode demorar na 1ª vez)")
@@ -13,8 +126,7 @@ def carregar():
 
 
 def main() -> None:
-    st.title("📚 Celina")
-    st.caption("Chat sobre seus PDFs, rodando localmente no seu PC.")
+    aplicar_estilo()
 
     try:
         index, embedder, gen_bundle, texts, metas, indice_imagens = carregar()
@@ -31,6 +143,7 @@ def main() -> None:
     if "historico" not in st.session_state:
         st.session_state.historico = []
 
+    # Reexibe as mensagens já trocadas nesta sessão
     for msg in st.session_state.historico:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -93,13 +206,20 @@ def main() -> None:
         )
 
     with st.sidebar:
-        st.subheader("Sobre")
+        logo_uri = carregar_como_data_uri(LOGO_EMBLEMA_PATH)
+        if logo_uri:
+            st.markdown(
+                f'<img src="{logo_uri}" style="width:64px;border-radius:50%;'
+                f'box-shadow:0 0 16px rgba(159,123,255,0.5);margin-bottom:0.6rem;" />',
+                unsafe_allow_html=True,
+            )
+        st.subheader("Sobre a Celina")
         st.write(
-            "O Celina busca os trechos mais relevantes dos seus PDFs e usa um "
-            "modelo local para responder com base neles, mostrando também "
-            "imagens ilustrativas das páginas usadas quando disponíveis."
+            "Busca os trechos mais relevantes dos seus PDFs e usa um modelo "
+            "local para responder com base neles, mostrando também imagens "
+            "ilustrativas das páginas usadas quando disponíveis."
         )
-        if st.button("Limpar conversa"):
+        if st.button("🗑️ Limpar conversa"):
             st.session_state.historico = []
             st.rerun()
 
