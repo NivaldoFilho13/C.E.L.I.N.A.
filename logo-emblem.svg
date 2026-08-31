@@ -1,0 +1,43 @@
+<svg width="460" height="460" viewBox="170 100 460 460" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1B1030"/>
+      <stop offset="100%" stop-color="#3A1A5C"/>
+    </linearGradient>
+    <linearGradient id="ringGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9F7BFF"/>
+      <stop offset="50%" stop-color="#5B8DEF"/>
+      <stop offset="100%" stop-color="#3AD6C4"/>
+    </linearGradient>
+    <linearGradient id="coreGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C9A8FF"/>
+      <stop offset="100%" stop-color="#6FD8FF"/>
+    </linearGradient>
+    <filter id="glow2" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <clipPath id="clipCircle2">
+      <circle cx="400" cy="330" r="230"/>
+    </clipPath>
+  </defs>
+  <circle cx="400" cy="330" r="230" fill="url(#bgGrad2)"/>
+  <g clip-path="url(#clipCircle2)">
+    <circle cx="400" cy="330" r="170" fill="none" stroke="url(#ringGrad2)"
+            stroke-width="26" stroke-linecap="round"
+            stroke-dasharray="900 1200" transform="rotate(-40 400 330)"
+            filter="url(#glow2)"/>
+    <circle cx="400" cy="330" r="120" fill="none" stroke="#8E6FE0"
+            stroke-width="4" stroke-opacity="0.5"/>
+    <circle cx="562" cy="230" r="12" fill="#3AD6C4" filter="url(#glow2)"/>
+    <circle cx="255" cy="420" r="8" fill="#9F7BFF" filter="url(#glow2)"/>
+    <circle cx="470" cy="470" r="6" fill="#6FD8FF"/>
+    <circle cx="400" cy="330" r="58" fill="url(#coreGrad2)" filter="url(#glow2)"/>
+    <circle cx="400" cy="330" r="58" fill="none" stroke="#ffffff" stroke-opacity="0.3" stroke-width="2"/>
+    <line x1="400" y1="330" x2="562" y2="230" stroke="#3AD6C4" stroke-width="2" stroke-opacity="0.5"/>
+    <line x1="400" y1="330" x2="255" y2="420" stroke="#9F7BFF" stroke-width="2" stroke-opacity="0.5"/>
+  </g>
+</svg>

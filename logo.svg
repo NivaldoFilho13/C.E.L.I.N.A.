@@ -1,0 +1,49 @@
+<svg width="800" height="800" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1B1030"/>
+      <stop offset="100%" stop-color="#3A1A5C"/>
+    </linearGradient>
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9F7BFF"/>
+      <stop offset="50%" stop-color="#5B8DEF"/>
+      <stop offset="100%" stop-color="#3AD6C4"/>
+    </linearGradient>
+    <linearGradient id="coreGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C9A8FF"/>
+      <stop offset="100%" stop-color="#6FD8FF"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- fundo -->
+  <rect width="800" height="800" fill="url(#bgGrad)"/>
+  <!-- anel orbital externo (forma de "C" aberto) -->
+  <circle cx="400" cy="330" r="170" fill="none" stroke="url(#ringGrad)"
+          stroke-width="26" stroke-linecap="round"
+          stroke-dasharray="900 1200" transform="rotate(-40 400 330)"
+          filter="url(#glow)"/>
+  <!-- anel interno fino -->
+  <circle cx="400" cy="330" r="120" fill="none" stroke="#8E6FE0"
+          stroke-width="4" stroke-opacity="0.5"/>
+  <!-- pontos orbitais estilo "neurônios" -->
+  <circle cx="562" cy="230" r="12" fill="#3AD6C4" filter="url(#glow)"/>
+  <circle cx="255" cy="420" r="8" fill="#9F7BFF" filter="url(#glow)"/>
+  <circle cx="470" cy="470" r="6" fill="#6FD8FF"/>
+  <!-- núcleo central -->
+  <circle cx="400" cy="330" r="58" fill="url(#coreGrad)" filter="url(#glow)"/>
+  <circle cx="400" cy="330" r="58" fill="none" stroke="#ffffff" stroke-opacity="0.3" stroke-width="2"/>
+  <!-- linhas de conexão sutil -->
+  <line x1="400" y1="330" x2="562" y2="230" stroke="#3AD6C4" stroke-width="2" stroke-opacity="0.5"/>
+  <line x1="400" y1="330" x2="255" y2="420" stroke="#9F7BFF" stroke-width="2" stroke-opacity="0.5"/>
+  <!-- wordmark -->
+  <text x="400" y="600" text-anchor="middle" font-family="'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="88" font-weight="600" fill="#F3EEFF" letter-spacing="4">Celina</text>
+  <text x="400" y="645" text-anchor="middle" font-family="'Segoe UI', Helvetica, Arial, sans-serif"
+        font-size="22" font-weight="400" fill="#9F7BFF" letter-spacing="10">INTELIGÊNCIA ARTIFICIAL</text>
+</svg>
