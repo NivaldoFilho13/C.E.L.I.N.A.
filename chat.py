@@ -1,30 +1,18 @@
-"""
-Loop de chat: busca os trechos mais relevantes dos PDFs indexados e gera
-uma resposta em português citando as fontes usadas.
-"""
-
+import json
 import os
 import pickle
 import sys
-
 import faiss
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 INDEX_FILE = "data/index.faiss"
 META_FILE = "data/docs.pkl"
+IMAGES_INDEX_FILE = "data/images_index.json"
+REGRAS_FILE = "regras.txt"
 EMB_MODEL = "all-MiniLM-L6-v2"
-
-# Qwen2.5-1.5B-Instruct: modelo multilíngue de verdade (bem melhor em
-# português que o FLAN-T5, que é treinado majoritariamente em inglês).
-# ~3GB de download na primeira vez; roda em CPU, mas é mais lento que o
-# flan-t5-small. Se seu PC for fraco, veja a alternativa comentada abaixo.
 GEN_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
-
-# Alternativa mais leve (menor qualidade em português, mas mais rápida):
-# GEN_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
-
-TOP_K = 4  # quantos trechos recuperar por pergunta
+TOP_K = 4  
 MAX_NEW_TOKENS = 400
 
 
@@ -42,6 +30,11 @@ def carregar_recursos():
     with open(META_FILE, "rb") as f:
         meta = pickle.load(f)
 
+    indice_imagens = {}
+    if os.path.exists(IMAGES_INDEX_FILE):
+        with open(IMAGES_INDEX_FILE, "r", encoding="utf-8") as f:
+            indice_imagens = json.load(f)
+
     print(f"Carregando modelo de embeddings ({EMB_MODEL})...")
     embedder = SentenceTransformer(EMB_MODEL)
 
@@ -50,7 +43,7 @@ def carregar_recursos():
     model = AutoModelForCausalLM.from_pretrained(GEN_MODEL)
     model.eval()
 
-    return index, embedder, (tokenizer, model), meta["texts"], meta["metas"]
+    return index, embedder, (tokenizer, model), meta["texts"], meta["metas"], indice_imagens
 
 
 def gerar_resposta(gen_bundle, prompt: str, max_new_tokens: int = MAX_NEW_TOKENS) -> str:
@@ -71,7 +64,6 @@ def gerar_resposta(gen_bundle, prompt: str, max_new_tokens: int = MAX_NEW_TOKENS
         pad_token_id=tokenizer.eos_token_id,
     )
 
-    # Pega só os tokens gerados a mais (a resposta), sem repetir o prompt
     tokens_novos = saida[0][entradas["input_ids"].shape[1]:]
     texto = tokenizer.decode(tokens_novos, skip_special_tokens=True)
     return texto.strip()
@@ -89,19 +81,39 @@ def retrieve(index, embedder, texts, metas, query: str, k: int = TOP_K):
     return resultados
 
 
-def build_prompt(contexts, question: str) -> str:
+def carregar_regras(caminho: str = REGRAS_FILE) -> list[str]:
+    """Lê o arquivo de regras de formato, ignorando linhas em branco e comentários."""
+    if not os.path.exists(caminho):
+        return []
+
+    regras = []
+    with open(caminho, "r", encoding="utf-8") as f:
+        for linha in f:
+            linha = linha.strip()
+            if not linha or linha.startswith("#"):
+                continue
+            regras.append(linha)
+    return regras
+
+
+def build_prompt(contexts, question: str, regras: list[str] | None = None) -> str:
     blocos = []
     for texto, meta, _score in contexts:
         fonte = f"{meta['source']} - página {meta['page']}"
         blocos.append(f"[Fonte: {fonte}]\n{texto}")
     ctx = "\n\n".join(blocos)
 
+    regras = regras if regras is not None else carregar_regras()
+    regras_texto = ""
+    if regras:
+        regras_formatadas = "\n".join(f"- {r}" for r in regras)
+        regras_texto = f"\n\nRegras de formato a seguir:\n{regras_formatadas}"
+
     prompt = (
         "Responda à pergunta abaixo em português, usando apenas as informações "
-        "dos trechos fornecidos. Seja objetivo e cite a fonte entre colchetes "
-        "(ex: [nome.pdf - página 3]) quando usar um trecho. Se os trechos não "
-        "tiverem a informação necessária, diga que não encontrou isso nos "
-        "documentos — não invente.\n\n"
+        "dos trechos fornecidos. Se os trechos não tiverem a informação "
+        "necessária, diga que não encontrou isso nos documentos — não invente."
+        f"{regras_texto}\n\n"
         f"### Trechos\n{ctx}\n\n"
         f"### Pergunta\n{question}"
     )
@@ -120,8 +132,25 @@ def formatar_fontes(contexts) -> str:
     return "\n".join(linhas)
 
 
+def obter_imagens_dos_contextos(contexts, indice_imagens: dict) -> list[str]:
+    """Devolve os caminhos das imagens (sem repetir) das páginas usadas na resposta."""
+    vistos_paginas = set()
+    caminhos: list[str] = []
+    for _texto, meta, _score in contexts:
+        chave_pagina = (meta["source"], meta["page"])
+        if chave_pagina in vistos_paginas:
+            continue
+        vistos_paginas.add(chave_pagina)
+
+        chave_indice = f"{meta['source']}::{meta['page']}"
+        for caminho in indice_imagens.get(chave_indice, []):
+            if caminho not in caminhos and os.path.exists(caminho):
+                caminhos.append(caminho)
+    return caminhos
+
+
 def chat_loop():
-    index, embedder, gen_bundle, texts, metas = carregar_recursos()
+    index, embedder, gen_bundle, texts, metas, indice_imagens = carregar_recursos()
 
     print("\nChat iniciado. Digite 'sair' para encerrar.\n")
     while True:
@@ -153,6 +182,13 @@ def chat_loop():
         print(f"\nAssistente: {resp}")
         print("\nFontes consultadas:")
         print(formatar_fontes(contexts))
+
+        imagens = obter_imagens_dos_contextos(contexts, indice_imagens)
+        if imagens:
+            print("\nImagens ilustrativas das páginas usadas (abra manualmente para ver):")
+            for caminho in imagens:
+                print(f"  - {caminho}")
+            print("(Dica: rode 'streamlit run app.py' para ver essas imagens direto na tela.)")
         print()
 
 
