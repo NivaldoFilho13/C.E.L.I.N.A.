@@ -127,6 +127,22 @@ expansível. Para encerrar, feche a aba e pressione `Ctrl+C` no terminal.
     conforme o tipo de documento (textos mais técnicos costumam se
     beneficiar de chunks menores).
 
+## Regras de formato das respostas
+
+Edite o arquivo `regras.txt` (na raiz do projeto) para mudar como a Celina
+formata as respostas — tamanho, estilo, se cita fonte, se usa listas, etc.
+Cada linha do arquivo é uma regra; linhas em branco ou começando com `#`
+são ignoradas. Exemplo do arquivo padrão:
+
+```
+Responda de forma objetiva, em poucas frases (no máximo 1 parágrafo curto).
+Sempre cite a fonte entre colchetes (ex: [nome.pdf - página 3]) quando usar um trecho.
+Use listas com marcadores quando a resposta tiver vários itens.
+```
+
+Essas regras são recarregadas a cada pergunta — você pode editar o arquivo
+e testar na hora, sem reiniciar `chat.py` nem o Streamlit.
+
 ## Identidade visual
 
 - `assets/logo.svg` — logo completa (com o nome "Celina"), usada como
