@@ -5,7 +5,6 @@ import uuid
 from datetime import datetime
 import streamlit as st
 from chat import build_prompt, carregar_recursos, gerar_resposta, obter_imagens_dos_contextos, retrieve
-a
 TOP_K = 4
 
 ASSETS_DIR = "assets"
