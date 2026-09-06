@@ -36,6 +36,10 @@ Resumo rápido
 - **Identidade visual própria**: logo da Celina, banner de cabeçalho e um
   tema de cores (roxo/azul escuro) aplicados na interface web — veja
   `assets/` e `.streamlit/config.toml`.
+- **Múltiplas conversas**: a interface web agora tem uma barra lateral com
+  "➕ Novo chat" e a lista de conversas salvas anteriormente — clique numa
+  para reabri-la, ou no 🗑️ para apagá-la. Cada conversa é salva em
+  `data/chats/` e sobrevive mesmo se você fechar o navegador ou o terminal.
 - **Imagens ilustrativas**: `extract_pdfs.py` agora também extrai as
   figuras/diagramas embutidos em cada página do PDF (ignorando ícones
   pequenos, como marcadores de lista). Quando uma resposta usa uma página
