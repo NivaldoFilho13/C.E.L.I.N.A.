@@ -9,6 +9,7 @@ Resumo rápido
 - Rode `python extract_pdfs.py` → gera `data/documents.jsonl` e `data/images/`.
 - Rode `python build_index.py` → cria `data/index.faiss` e `data/docs.pkl`.
 - Rode `python chat.py` (terminal) ou `streamlit run app.py` (interface web).
+- Ou dê um duplo clique em `iniciar_celina.bat` para um menu com tudo isso.
 
 > **Se você já tinha rodado `extract_pdfs.py` numa versão anterior**, rode-o
 > de novo — é nele que as imagens são extraídas pela primeira vez. Não
