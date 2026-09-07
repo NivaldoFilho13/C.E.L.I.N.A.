@@ -3,7 +3,11 @@ import json
 import os
 import uuid
 from datetime import datetime
+
 import streamlit as st
+
+import build_index
+import extract_pdfs
 from chat import (
     REGRAS_FILE,
     build_prompt,
@@ -14,6 +18,7 @@ from chat import (
 )
 
 TOP_K = 4
+PDF_DIR = "pdfs"
 
 ASSETS_DIR = "assets"
 LOGO_PATH = os.path.join(ASSETS_DIR, "logo.svg")
@@ -117,6 +122,36 @@ def ler_regras_raw() -> str:
 def salvar_regras_raw(texto: str) -> None:
     with open(REGRAS_FILE, "w", encoding="utf-8") as f:
         f.write(texto)
+
+
+def salvar_pdfs_enviados(arquivos) -> list[str]:
+    """Salva os PDFs enviados pela interface dentro de pdfs/, sobrescrevendo
+    se já existir um com o mesmo nome. Devolve a lista de nomes salvos."""
+    os.makedirs(PDF_DIR, exist_ok=True)
+    nomes_salvos = []
+    for arquivo in arquivos:
+        caminho = os.path.join(PDF_DIR, arquivo.name)
+        with open(caminho, "wb") as f:
+            f.write(arquivo.getbuffer())
+        nomes_salvos.append(arquivo.name)
+    return nomes_salvos
+
+
+def processar_pdfs() -> tuple[bool, str]:
+    """Roda a extração de texto/imagens e reconstrói o índice de busca.
+    Devolve (sucesso, mensagem)."""
+    codigo_extracao = extract_pdfs.main()
+    if codigo_extracao != 0:
+        return False, "Falha ao extrair os PDFs (veja o terminal para detalhes)."
+
+    codigo_indice = build_index.main()
+    if codigo_indice != 0:
+        return (
+            False,
+            "Falha ao construir o índice de busca (veja o terminal para detalhes).",
+        )
+
+    return True, "PDFs processados e índice atualizado com sucesso!"
 
 
 @st.cache_data
@@ -227,14 +262,16 @@ def aplicar_estilo() -> None:
         <div class="celina-hero">
             {logo_html}
             <div class="celina-hero-title">CELINA</div>
-            <div class="celina-hero-subtitle">Inteligência Artificial · Nivaldo Araújo &copy</div>
+            <div class="celina-hero-subtitle">Inteligência Artificial · Nivaldo Araújo &copy; 2026</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-@st.cache_resource(show_spinner="Carregando modelos do Celina... (pode demorar na 1ª vez)")
+@st.cache_resource(
+    show_spinner="Carregando modelos do Celina... (pode demorar na 1ª vez)"
+)
 def carregar():
     return carregar_recursos()
 
@@ -254,6 +291,33 @@ def renderizar_sidebar() -> None:
             st.session_state.historico = []
             st.rerun()
 
+        with st.expander(
+            "Enviar PDFs", expanded=not os.path.exists("data/index.faiss")
+        ):
+            arquivos = st.file_uploader(
+                "Solte um ou mais PDFs aqui",
+                type=["pdf"],
+                accept_multiple_files=True,
+                key="upload_pdfs",
+            )
+            if st.button(
+                "⚙️ Processar PDFs", use_container_width=True, disabled=not arquivos
+            ):
+                nomes = salvar_pdfs_enviados(arquivos)
+                with st.spinner(
+                    f"Processando {len(nomes)} PDF(s)... isso pode levar alguns minutos."
+                ):
+                    sucesso, mensagem = processar_pdfs()
+
+                if sucesso:
+                    carregar.clear()
+                    st.success(mensagem)
+                    st.rerun()
+                else:
+                    st.error(mensagem)
+
+        st.divider()
+
         st.markdown("**Conversas**")
         chats = listar_chats()
 
@@ -266,7 +330,9 @@ def renderizar_sidebar() -> None:
                 rotulo = ("➤ " if selecionado else "") + chat["title"]
 
                 with col_titulo:
-                    if st.button(rotulo, key=f"abrir_{chat['id']}", use_container_width=True):
+                    if st.button(
+                        rotulo, key=f"abrir_{chat['id']}", use_container_width=True
+                    ):
                         st.session_state.chat_id = chat["id"]
                         st.session_state.historico = carregar_chat(chat["id"])
                         st.rerun()
@@ -281,7 +347,7 @@ def renderizar_sidebar() -> None:
 
         st.divider()
 
-        with st.expander("⚙️ Regras de formato das respostas"):
+        with st.expander("Regras de formato das respostas"):
             texto_regras = st.text_area(
                 "Uma regra por linha (linhas com # são ignoradas):",
                 value=ler_regras_raw(),
@@ -292,7 +358,7 @@ def renderizar_sidebar() -> None:
             with col_salvar:
                 if st.button("Salvar", use_container_width=True):
                     salvar_regras_raw(texto_regras)
-                    st.success("Regras salvas")
+                    st.success("Regras salvas!")
             with col_restaurar:
                 if st.button("↺ Padrão", use_container_width=True):
                     salvar_regras_raw(REGRAS_PADRAO)
@@ -310,19 +376,6 @@ def renderizar_sidebar() -> None:
 def main() -> None:
     aplicar_estilo()
 
-    try:
-        index, embedder, gen_bundle, texts, metas, indice_imagens = carregar()
-    except SystemExit:
-        st.error(
-            "Índice não encontrado. Antes de usar a interface, rode no terminal, "
-            "nesta ordem:\n\n"
-            "1. `python extract_pdfs.py`\n"
-            "2. `python build_index.py`\n\n"
-            "Depois volte e recarregue esta página."
-        )
-        return
-
-
     if "chat_id" not in st.session_state:
         chats_existentes = listar_chats()
         if chats_existentes:
@@ -333,6 +386,15 @@ def main() -> None:
             st.session_state.historico = []
 
     renderizar_sidebar()
+
+    try:
+        index, embedder, gen_bundle, texts, metas, indice_imagens = carregar()
+    except SystemExit:
+        st.info(
+            "Nenhum PDF indexado ainda. Use **📄 Enviar PDFs**, na barra "
+            "lateral, para enviar seus arquivos e criar o índice de busca."
+        )
+        return
 
     for msg in st.session_state.historico:
         with st.chat_message(msg["role"]):
@@ -376,7 +438,9 @@ def main() -> None:
                         if chave in vistos:
                             continue
                         vistos.add(chave)
-                        fontes.append(f"{meta['source']} (página {meta['page']}, relevância {score:.2f})")
+                        fontes.append(
+                            f"{meta['source']} (página {meta['page']}, relevância {score:.2f})"
+                        )
 
                     imagens = obter_imagens_dos_contextos(contextos, indice_imagens)
 
@@ -392,12 +456,16 @@ def main() -> None:
                         st.markdown(f"- {fonte}")
 
         st.session_state.historico.append(
-            {"role": "assistant", "content": resposta, "fontes": fontes, "imagens": imagens}
+            {
+                "role": "assistant",
+                "content": resposta,
+                "fontes": fontes,
+                "imagens": imagens,
+            }
         )
 
-
         salvar_chat(st.session_state.chat_id, st.session_state.historico)
-        st.rerun()  
+        st.rerun()
 
 
 if __name__ == "__main__":
