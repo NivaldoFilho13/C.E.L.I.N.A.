@@ -40,6 +40,10 @@ Resumo rápido
   "➕ Novo chat" e a lista de conversas salvas anteriormente — clique numa
   para reabri-la, ou no 🗑️ para apagá-la. Cada conversa é salva em
   `data/chats/` e sobrevive mesmo se você fechar o navegador ou o terminal.
+- **Upload de PDFs pela interface**: não precisa mais rodar
+  `extract_pdfs.py`/`build_index.py` no terminal — na barra lateral, abra
+  "📄 Enviar PDFs", solte os arquivos e clique em "⚙️ Processar PDFs". A
+  Celina extrai o conteúdo e reconstrói o índice de busca sozinha.
 - **Imagens ilustrativas**: `extract_pdfs.py` agora também extrai as
   figuras/diagramas embutidos em cada página do PDF (ignorando ícones
   pequenos, como marcadores de lista). Quando uma resposta usa uma página
