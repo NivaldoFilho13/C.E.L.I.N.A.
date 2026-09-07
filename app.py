@@ -4,7 +4,15 @@ import os
 import uuid
 from datetime import datetime
 import streamlit as st
-from chat import build_prompt, carregar_recursos, gerar_resposta, obter_imagens_dos_contextos, retrieve
+from chat import (
+    REGRAS_FILE,
+    build_prompt,
+    carregar_recursos,
+    gerar_resposta,
+    obter_imagens_dos_contextos,
+    retrieve,
+)
+
 TOP_K = 4
 
 ASSETS_DIR = "assets"
@@ -19,6 +27,7 @@ st.set_page_config(
     page_icon=LOGO_EMBLEMA_PATH if os.path.exists(LOGO_EMBLEMA_PATH) else "📚",
     layout="centered",
 )
+
 
 def _caminho_chat(chat_id: str) -> str:
     return os.path.join(CHATS_DIR, f"{chat_id}.json")
@@ -87,6 +96,28 @@ def listar_chats() -> list[dict]:
 
     resultado.sort(key=lambda c: c["updated_at"], reverse=True)
     return resultado
+
+
+REGRAS_PADRAO = (
+    "Responda de forma objetiva, em poucas frases (no máximo 1 parágrafo curto).\n"
+    "Sempre cite a fonte entre colchetes (ex: [nome.pdf - página 3]) quando usar um trecho.\n"
+    "Use listas com marcadores quando a resposta tiver vários itens.\n"
+)
+
+
+def ler_regras_raw() -> str:
+    """Lê o conteúdo bruto do regras.txt (com comentários e formatação),
+    para edição na interface. Se o arquivo não existir, devolve um modelo."""
+    if not os.path.exists(REGRAS_FILE):
+        return REGRAS_PADRAO
+    with open(REGRAS_FILE, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def salvar_regras_raw(texto: str) -> None:
+    with open(REGRAS_FILE, "w", encoding="utf-8") as f:
+        f.write(texto)
+
 
 @st.cache_data
 def carregar_como_data_uri(caminho: str) -> str | None:
@@ -207,6 +238,7 @@ def aplicar_estilo() -> None:
 def carregar():
     return carregar_recursos()
 
+
 def renderizar_sidebar() -> None:
     with st.sidebar:
         logo_uri = carregar_como_data_uri(LOGO_EMBLEMA_PATH)
@@ -248,6 +280,25 @@ def renderizar_sidebar() -> None:
                         st.rerun()
 
         st.divider()
+
+        with st.expander("⚙️ Regras de formato das respostas"):
+            texto_regras = st.text_area(
+                "Uma regra por linha (linhas com # são ignoradas):",
+                value=ler_regras_raw(),
+                height=180,
+                key="editor_regras",
+            )
+            col_salvar, col_restaurar = st.columns(2)
+            with col_salvar:
+                if st.button("Salvar", use_container_width=True):
+                    salvar_regras_raw(texto_regras)
+                    st.success("Regras salvas")
+            with col_restaurar:
+                if st.button("↺ Padrão", use_container_width=True):
+                    salvar_regras_raw(REGRAS_PADRAO)
+                    st.rerun()
+
+        st.divider()
         st.subheader("Sobre a Celina")
         st.write(
             "Busca os trechos mais relevantes dos seus PDFs e usa um modelo "
@@ -270,6 +321,7 @@ def main() -> None:
             "Depois volte e recarregue esta página."
         )
         return
+
 
     if "chat_id" not in st.session_state:
         chats_existentes = listar_chats()
@@ -343,8 +395,10 @@ def main() -> None:
             {"role": "assistant", "content": resposta, "fontes": fontes, "imagens": imagens}
         )
 
+
         salvar_chat(st.session_state.chat_id, st.session_state.historico)
         st.rerun()  
+
 
 if __name__ == "__main__":
     main()
