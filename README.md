@@ -148,6 +148,11 @@ Use listas com marcadores quando a resposta tiver vários itens.
 Essas regras são recarregadas a cada pergunta — você pode editar o arquivo
 e testar na hora, sem reiniciar `chat.py` nem o Streamlit.
 
+**Editar pela interface web:** na barra lateral do `app.py`, abra
+"⚙️ Regras de formato das respostas" — dá pra editar o texto ali mesmo e
+clicar em "💾 Salvar" (ou "↺ Padrão" para restaurar as regras originais),
+sem precisar abrir nenhum editor de texto separado.
+
 ## Identidade visual
 
 - `assets/logo.svg` — logo completa (com o nome "Celina"), usada como
