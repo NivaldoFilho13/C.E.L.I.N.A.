@@ -7,6 +7,7 @@ from datetime import datetime
 import streamlit as st
 
 import build_index
+import extract_outros
 import extract_pdfs
 from chat import (
     REGRAS_FILE,
@@ -19,6 +20,8 @@ from chat import (
 
 TOP_K = 4
 PDF_DIR = "pdfs"
+OUTROS_DIR = "outros"
+URLS_FILE = "urls.txt"
 
 ASSETS_DIR = "assets"
 LOGO_PATH = os.path.join(ASSETS_DIR, "logo.svg")
@@ -124,34 +127,100 @@ def salvar_regras_raw(texto: str) -> None:
         f.write(texto)
 
 
-def salvar_pdfs_enviados(arquivos) -> list[str]:
-    """Salva os PDFs enviados pela interface dentro de pdfs/, sobrescrevendo
-    se já existir um com o mesmo nome. Devolve a lista de nomes salvos."""
+EXTENSOES_OUTROS = (".txt", ".md", ".docx", ".csv", ".xlsx")
+
+
+def salvar_arquivos_enviados(arquivos) -> tuple[int, int]:
+    """Salva os arquivos enviados na pasta certa conforme a extensão
+    (pdfs/ ou outros/). Devolve (qtd_pdfs, qtd_outros) salvos."""
     os.makedirs(PDF_DIR, exist_ok=True)
-    nomes_salvos = []
+    os.makedirs(OUTROS_DIR, exist_ok=True)
+
+    qtd_pdfs = 0
+    qtd_outros = 0
     for arquivo in arquivos:
-        caminho = os.path.join(PDF_DIR, arquivo.name)
+        ext = os.path.splitext(arquivo.name)[1].lower()
+        pasta = PDF_DIR if ext == ".pdf" else OUTROS_DIR
+        caminho = os.path.join(pasta, arquivo.name)
         with open(caminho, "wb") as f:
             f.write(arquivo.getbuffer())
-        nomes_salvos.append(arquivo.name)
-    return nomes_salvos
+        if ext == ".pdf":
+            qtd_pdfs += 1
+        else:
+            qtd_outros += 1
+
+    return qtd_pdfs, qtd_outros
 
 
-def processar_pdfs() -> tuple[bool, str]:
-    """Roda a extração de texto/imagens e reconstrói o índice de busca.
-    Devolve (sucesso, mensagem)."""
-    codigo_extracao = extract_pdfs.main()
-    if codigo_extracao != 0:
-        return False, "Falha ao extrair os PDFs (veja o terminal para detalhes)."
+def salvar_links(texto_links: str) -> int:
+    """Acrescenta os links colados (um por linha) ao urls.txt, sem duplicar
+    os que já estavam lá. Devolve quantos links novos foram adicionados."""
+    linhas_novas = [l.strip() for l in texto_links.splitlines() if l.strip()]
+    if not linhas_novas:
+        return 0
 
-    codigo_indice = build_index.main()
-    if codigo_indice != 0:
-        return (
-            False,
-            "Falha ao construir o índice de busca (veja o terminal para detalhes).",
-        )
+    existentes = set()
+    if os.path.exists(URLS_FILE):
+        with open(URLS_FILE, "r", encoding="utf-8") as f:
+            existentes = {l.strip() for l in f if l.strip()}
 
-    return True, "PDFs processados e índice atualizado com sucesso!"
+    novos = [l for l in linhas_novas if l not in existentes]
+    if novos:
+        with open(URLS_FILE, "a", encoding="utf-8") as f:
+            for link in novos:
+                f.write(link + "\n")
+
+    return len(novos)
+
+
+def salvar_texto_colado(titulo: str, texto: str) -> str:
+    """Salva um texto colado como um arquivo .txt dentro de outros/."""
+    os.makedirs(OUTROS_DIR, exist_ok=True)
+    nome_base = "".join(c for c in titulo.strip() if c.isalnum() or c in " -_").strip()
+    nome_base = nome_base.replace(" ", "_") or "texto_colado"
+    nome_arquivo = f"{nome_base}.txt"
+    caminho = os.path.join(OUTROS_DIR, nome_arquivo)
+    with open(caminho, "w", encoding="utf-8") as f:
+        f.write(texto)
+    return nome_arquivo
+
+
+def processar_fontes() -> tuple[bool, str]:
+    """Extrai o que houver em pdfs/, outros/ e urls.txt, e reconstrói o
+    índice de busca. Devolve (sucesso, mensagem)."""
+    avisos = []
+    algo_processado = False
+
+    tem_pdfs = os.path.isdir(PDF_DIR) and any(
+        f.lower().endswith(".pdf") for f in os.listdir(PDF_DIR)
+    )
+    if tem_pdfs:
+        if extract_pdfs.main() == 0:
+            algo_processado = True
+        else:
+            avisos.append("houve um problema extraindo os PDFs")
+
+    tem_outros = os.path.isdir(OUTROS_DIR) and any(
+        f.lower().endswith(EXTENSOES_OUTROS) for f in os.listdir(OUTROS_DIR)
+    )
+    tem_urls = os.path.exists(URLS_FILE) and any(
+        l.strip() for l in open(URLS_FILE, encoding="utf-8")
+    )
+    if tem_outros or tem_urls:
+        if extract_outros.main() == 0:
+            algo_processado = True
+        else:
+            avisos.append("houve um problema extraindo os outros arquivos/links")
+
+    if not algo_processado:
+        return False, "Nenhuma fonte nova encontrada para processar."
+
+    if build_index.main() != 0:
+        return False, "Falha ao construir o índice de busca (veja o terminal para detalhes)."
+
+    if avisos:
+        return True, "Índice atualizado, mas " + " e ".join(avisos) + " (veja o terminal)."
+    return True, "Fontes processadas e índice atualizado com sucesso!"
 
 
 @st.cache_data
@@ -262,19 +331,16 @@ def aplicar_estilo() -> None:
         <div class="celina-hero">
             {logo_html}
             <div class="celina-hero-title">CELINA</div>
-            <div class="celina-hero-subtitle">Inteligência Artificial · Nivaldo Araújo &copy; 2026</div>
+            <div class="celina-hero-subtitle">Inteligência Artificial · Chat sobre seus PDFs</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-@st.cache_resource(
-    show_spinner="Carregando modelos do Celina... (pode demorar na 1ª vez)"
-)
+@st.cache_resource(show_spinner="Carregando modelos do Celina... (pode demorar na 1ª vez)")
 def carregar():
     return carregar_recursos()
-
 
 def renderizar_sidebar() -> None:
     with st.sidebar:
@@ -286,35 +352,69 @@ def renderizar_sidebar() -> None:
                 unsafe_allow_html=True,
             )
 
-        if st.button("Novo chat", use_container_width=True):
+        if st.button("➕ Novo chat", use_container_width=True):
             st.session_state.chat_id = novo_chat_id()
             st.session_state.historico = []
             st.rerun()
 
-        with st.expander(
-            "Enviar PDFs", expanded=not os.path.exists("data/index.faiss")
-        ):
-            arquivos = st.file_uploader(
-                "Solte um ou mais PDFs aqui",
-                type=["pdf"],
-                accept_multiple_files=True,
-                key="upload_pdfs",
-            )
-            if st.button(
-                "⚙️ Processar PDFs", use_container_width=True, disabled=not arquivos
-            ):
-                nomes = salvar_pdfs_enviados(arquivos)
-                with st.spinner(
-                    f"Processando {len(nomes)} PDF(s)... isso pode levar alguns minutos."
-                ):
-                    sucesso, mensagem = processar_pdfs()
+        with st.expander("Enviar fontes", expanded=not os.path.exists("data/index.faiss")):
+            aba_arquivo, aba_link, aba_texto = st.tabs(["Arquivo", "Link", "Colar texto"])
 
-                if sucesso:
-                    carregar.clear()
-                    st.success(mensagem)
-                    st.rerun()
-                else:
-                    st.error(mensagem)
+            with aba_arquivo:
+                arquivos = st.file_uploader(
+                    "PDF, TXT, MD, DOCX, CSV ou XLSX",
+                    type=["pdf", "txt", "md", "docx", "csv", "xlsx"],
+                    accept_multiple_files=True,
+                    key="upload_arquivos",
+                )
+                if st.button("Processar arquivos", use_container_width=True, disabled=not arquivos):
+                    qtd_pdfs, qtd_outros = salvar_arquivos_enviados(arquivos)
+                    with st.spinner(f"Processando {qtd_pdfs + qtd_outros} arquivo(s)..."):
+                        sucesso, mensagem = processar_fontes()
+                    if sucesso:
+                        carregar.clear()
+                        st.success(mensagem)
+                        st.rerun()
+                    else:
+                        st.error(mensagem)
+
+            with aba_link:
+                texto_links = st.text_area(
+                    "Um link por linha",
+                    placeholder="https://exemplo.com/artigo\nhttps://exemplo.com/outra-pagina",
+                    key="input_links",
+                )
+                if st.button("Processar links", use_container_width=True, disabled=not texto_links.strip()):
+                    qtd_novos = salvar_links(texto_links)
+                    if qtd_novos == 0:
+                        st.warning("Nenhum link novo (já estavam salvos ou o campo está vazio).")
+                    else:
+                        with st.spinner(f"Baixando e processando {qtd_novos} link(s)..."):
+                            sucesso, mensagem = processar_fontes()
+                        if sucesso:
+                            carregar.clear()
+                            st.success(mensagem)
+                            st.rerun()
+                        else:
+                            st.error(mensagem)
+
+            with aba_texto:
+                titulo_texto = st.text_input("Nome para essa fonte", placeholder="ex: anotacoes-aula-5")
+                texto_colado = st.text_area("Cole o texto aqui", height=140, key="input_texto_colado")
+                if st.button(
+                    "Processar texto",
+                    use_container_width=True,
+                    disabled=not texto_colado.strip() or not titulo_texto.strip(),
+                ):
+                    salvar_texto_colado(titulo_texto, texto_colado)
+                    with st.spinner("Processando texto..."):
+                        sucesso, mensagem = processar_fontes()
+                    if sucesso:
+                        carregar.clear()
+                        st.success(mensagem)
+                        st.rerun()
+                    else:
+                        st.error(mensagem)
 
         st.divider()
 
@@ -330,9 +430,7 @@ def renderizar_sidebar() -> None:
                 rotulo = ("➤ " if selecionado else "") + chat["title"]
 
                 with col_titulo:
-                    if st.button(
-                        rotulo, key=f"abrir_{chat['id']}", use_container_width=True
-                    ):
+                    if st.button(rotulo, key=f"abrir_{chat['id']}", use_container_width=True):
                         st.session_state.chat_id = chat["id"]
                         st.session_state.historico = carregar_chat(chat["id"])
                         st.rerun()
@@ -385,17 +483,19 @@ def main() -> None:
             st.session_state.chat_id = novo_chat_id()
             st.session_state.historico = []
 
+ 
     renderizar_sidebar()
 
     try:
         index, embedder, gen_bundle, texts, metas, indice_imagens = carregar()
     except SystemExit:
         st.info(
-            "Nenhum PDF indexado ainda. Use **📄 Enviar PDFs**, na barra "
-            "lateral, para enviar seus arquivos e criar o índice de busca."
+            "Nenhuma fonte indexada ainda. Use **📄 Enviar fontes**, na barra "
+            "lateral, para enviar PDFs, textos, planilhas ou links e criar o índice de busca."
         )
         return
 
+   
     for msg in st.session_state.historico:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -438,9 +538,7 @@ def main() -> None:
                         if chave in vistos:
                             continue
                         vistos.add(chave)
-                        fontes.append(
-                            f"{meta['source']} (página {meta['page']}, relevância {score:.2f})"
-                        )
+                        fontes.append(f"{meta['source']} (página {meta['page']}, relevância {score:.2f})")
 
                     imagens = obter_imagens_dos_contextos(contextos, indice_imagens)
 
@@ -456,16 +554,12 @@ def main() -> None:
                         st.markdown(f"- {fonte}")
 
         st.session_state.historico.append(
-            {
-                "role": "assistant",
-                "content": resposta,
-                "fontes": fontes,
-                "imagens": imagens,
-            }
+            {"role": "assistant", "content": resposta, "fontes": fontes, "imagens": imagens}
         )
 
+
         salvar_chat(st.session_state.chat_id, st.session_state.historico)
-        st.rerun()
+        st.rerun() 
 
 
 if __name__ == "__main__":
