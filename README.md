@@ -1,15 +1,36 @@
 # C.E.L.I.N.A.
 
 Pipeline simples e gratuito para criar um chatbot que responde perguntas
-sobre o conteúdo dos seus PDFs em português, usando RAG
-(retrieval-augmented generation) e rodando em CPU.
+sobre o conteúdo dos seus PDFs, textos, planilhas e páginas da web, em
+português, usando RAG (retrieval-augmented generation) e rodando em CPU.
 
 Resumo rápido
 - Coloque seus PDFs em `pdfs/`.
-- Rode `python extract_pdfs.py` → gera `data/documents.jsonl` e `data/images/`.
+- Coloque arquivos .txt, .md, .docx, .csv ou .xlsx em `outros/`.
+- Liste links (um por linha) em `urls.txt`.
+- Rode `python extract_pdfs.py` e/ou `python extract_outros.py`.
 - Rode `python build_index.py` → cria `data/index.faiss` e `data/docs.pkl`.
 - Rode `python chat.py` (terminal) ou `streamlit run app.py` (interface web).
 - Ou dê um duplo clique em `iniciar_celina.bat` para um menu com tudo isso.
+- Ou, mais fácil ainda: pela própria interface web, use **📄 Enviar fontes**
+  na barra lateral (arquivo, link ou texto colado) — não precisa nem abrir
+  o terminal.
+
+## Fontes suportadas
+
+| Fonte | Onde colocar | O que precisa |
+|---|---|---|
+| PDF | `pdfs/` | nada extra |
+| Texto (.txt, .md) | `outros/` | nada extra |
+| Word (.docx) | `outros/` | `pip install python-docx` (já no requirements.txt) |
+| Planilha (.csv, .xlsx) | `outros/` | `pip install openpyxl` (já no requirements.txt) |
+| Página da web | uma URL por linha em `urls.txt` | `pip install requests beautifulsoup4` (já no requirements.txt) |
+| Texto colado | pela interface web, aba "Colar texto" | nada extra |
+
+Planilhas são divididas em blocos de ~20 linhas (cada linha formatada como
+`coluna: valor`), então funcionam melhor para dados tabulares simples do
+que para cálculos — a Celina não soma nem filtra números, ela busca texto
+relevante para responder à pergunta.
 
 > **Se você já tinha rodado `extract_pdfs.py` numa versão anterior**, rode-o
 > de novo — é nele que as imagens são extraídas pela primeira vez. Não
@@ -37,13 +58,16 @@ Resumo rápido
   tema de cores (roxo/azul escuro) aplicados na interface web — veja
   `assets/` e `.streamlit/config.toml`.
 - **Múltiplas conversas**: a interface web agora tem uma barra lateral com
-  "Novo chat" e a lista de conversas salvas anteriormente — clique numa
+  "➕ Novo chat" e a lista de conversas salvas anteriormente — clique numa
   para reabri-la, ou no 🗑️ para apagá-la. Cada conversa é salva em
   `data/chats/` e sobrevive mesmo se você fechar o navegador ou o terminal.
-- **Upload de PDFs pela interface**: não precisa mais rodar
-  `extract_pdfs.py`/`build_index.py` no terminal — na barra lateral, abra
-  "Enviar PDFs", solte os arquivos e clique em "⚙️ Processar PDFs". A
-  Celina extrai o conteúdo e reconstrói o índice de busca sozinha.
+- **Múltiplas fontes de conteúdo**: além de PDF, a Celina agora lê texto
+  (.txt/.md), Word (.docx), planilhas (.csv/.xlsx) e páginas da web — veja
+  a tabela "Fontes suportadas" no topo deste arquivo.
+- **Envio de fontes pela interface**: não precisa mais rodar scripts no
+  terminal — na barra lateral, "📄 Enviar fontes" tem 3 abas (arquivo,
+  link, colar texto). A Celina extrai o conteúdo e reconstrói o índice
+  de busca sozinha.
 - **Imagens ilustrativas**: `extract_pdfs.py` agora também extrai as
   figuras/diagramas embutidos em cada página do PDF (ignorando ícones
   pequenos, como marcadores de lista). Quando uma resposta usa uma página
