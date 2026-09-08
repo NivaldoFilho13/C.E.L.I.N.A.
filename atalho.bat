@@ -21,16 +21,18 @@ echo.
 echo 1 - Abrir interface web (recomendado)
 echo 2 - Abrir chat no terminal
 echo 3 - Extrair PDFs da pasta "pdfs"
-echo 4 - Construir indice de busca
-echo 5 - Sair
+echo 4 - Extrair outras fontes (txt/md/docx/csv/xlsx/links)
+echo 5 - Construir indice de busca
+echo 6 - Sair
 echo.
 set /p opcao="Escolha uma opcao: "
 
 if "%opcao%"=="1" goto web
 if "%opcao%"=="2" goto terminal
 if "%opcao%"=="3" goto extrair
-if "%opcao%"=="4" goto indice
-if "%opcao%"=="5" goto fim
+if "%opcao%"=="4" goto extrair_outros
+if "%opcao%"=="5" goto indice
+if "%opcao%"=="6" goto fim
 
 echo Opcao invalida.
 pause
@@ -48,6 +50,11 @@ goto menu
 
 :extrair
 python extract_pdfs.py
+pause
+goto menu
+
+:extrair_outros
+python extract_outros.py
 pause
 goto menu
 
