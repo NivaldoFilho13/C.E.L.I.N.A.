@@ -1,9 +1,3 @@
-"""
-Lê data/documents.jsonl (gerado por extract_pdfs.py), cria embeddings
-para cada trecho de texto e monta um índice FAISS para busca por
-similaridade.
-"""
-
 import json
 import os
 import pickle
@@ -13,12 +7,15 @@ import faiss
 from sentence_transformers import SentenceTransformer
 
 DOCS_FILE = "data/documents.jsonl"
+DOCS_OUTROS_FILE = "data/documents_outros.jsonl"
 INDEX_FILE = "data/index.faiss"
 META_FILE = "data/docs.pkl"
 EMB_MODEL = "all-MiniLM-L6-v2"
 
 
 def carregar_documentos(path: str) -> list[dict]:
+    if not os.path.exists(path):
+        return []
     docs = []
     with open(path, "r", encoding="utf-8") as f:
         for linha in f:
@@ -30,13 +27,13 @@ def carregar_documentos(path: str) -> list[dict]:
 
 
 def main() -> int:
-    if not os.path.exists(DOCS_FILE):
-        print(f"ERRO: '{DOCS_FILE}' não encontrado. Rode 'python extract_pdfs.py' primeiro.")
-        return 1
+    docs = carregar_documentos(DOCS_FILE) + carregar_documentos(DOCS_OUTROS_FILE)
 
-    docs = carregar_documentos(DOCS_FILE)
     if not docs:
-        print(f"ERRO: '{DOCS_FILE}' está vazio.")
+        print(
+            f"ERRO: nenhum documento encontrado. Rode 'python extract_pdfs.py' "
+            f"e/ou 'python extract_outros.py' primeiro."
+        )
         return 1
 
     texts = []
