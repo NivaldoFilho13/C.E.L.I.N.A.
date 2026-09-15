@@ -1,7 +1,11 @@
 import base64
+import io
 import json
 import os
+import random
 import uuid
+import zipfile
+from collections import Counter
 from datetime import datetime
 
 import streamlit as st
@@ -10,11 +14,17 @@ import build_index
 import extract_outros
 import extract_pdfs
 from chat import (
+    GEN_MODEL_PADRAO,
+    LIMIAR_CONFIANCA_PADRAO,
+    MODELOS_DISPONIVEIS,
     REGRAS_FILE,
     build_prompt,
     carregar_recursos,
+    formatar_fontes,
     gerar_resposta,
+    melhor_score,
     obter_imagens_dos_contextos,
+    resposta_somente_citacao,
     retrieve,
 )
 
@@ -22,13 +32,15 @@ TOP_K = 4
 PDF_DIR = "pdfs"
 OUTROS_DIR = "outros"
 URLS_FILE = "urls.txt"
+EXTENSOES_OUTROS = (".txt", ".md", ".docx", ".csv", ".xlsx")
 
 ASSETS_DIR = "assets"
-LOGO_PATH = os.path.join(ASSETS_DIR, "logo.svg")
 LOGO_EMBLEMA_PATH = os.path.join(ASSETS_DIR, "logo-emblem.svg")
 BANNER_PATH = os.path.join(ASSETS_DIR, "banner.png")
 
 CHATS_DIR = os.path.join("data", "chats")
+FEEDBACK_FILE = os.path.join("data", "feedback.jsonl")
+STATS_FILE = os.path.join("data", "estatisticas.jsonl")
 
 st.set_page_config(
     page_title="Celina",
@@ -80,7 +92,6 @@ def apagar_chat(chat_id: str) -> None:
 
 
 def listar_chats() -> list[dict]:
-    """Devolve [{id, title, updated_at}, ...] dos chats salvos, mais recente primeiro."""
     if not os.path.isdir(CHATS_DIR):
         return []
 
@@ -114,8 +125,6 @@ REGRAS_PADRAO = (
 
 
 def ler_regras_raw() -> str:
-    """Lê o conteúdo bruto do regras.txt (com comentários e formatação),
-    para edição na interface. Se o arquivo não existir, devolve um modelo."""
     if not os.path.exists(REGRAS_FILE):
         return REGRAS_PADRAO
     with open(REGRAS_FILE, "r", encoding="utf-8") as f:
@@ -127,12 +136,7 @@ def salvar_regras_raw(texto: str) -> None:
         f.write(texto)
 
 
-EXTENSOES_OUTROS = (".txt", ".md", ".docx", ".csv", ".xlsx")
-
-
 def salvar_arquivos_enviados(arquivos) -> tuple[int, int]:
-    """Salva os arquivos enviados na pasta certa conforme a extensão
-    (pdfs/ ou outros/). Devolve (qtd_pdfs, qtd_outros) salvos."""
     os.makedirs(PDF_DIR, exist_ok=True)
     os.makedirs(OUTROS_DIR, exist_ok=True)
 
@@ -153,8 +157,6 @@ def salvar_arquivos_enviados(arquivos) -> tuple[int, int]:
 
 
 def salvar_links(texto_links: str) -> int:
-    """Acrescenta os links colados (um por linha) ao urls.txt, sem duplicar
-    os que já estavam lá. Devolve quantos links novos foram adicionados."""
     linhas_novas = [l.strip() for l in texto_links.splitlines() if l.strip()]
     if not linhas_novas:
         return 0
@@ -174,7 +176,6 @@ def salvar_links(texto_links: str) -> int:
 
 
 def salvar_texto_colado(titulo: str, texto: str) -> str:
-    """Salva um texto colado como um arquivo .txt dentro de outros/."""
     os.makedirs(OUTROS_DIR, exist_ok=True)
     nome_base = "".join(c for c in titulo.strip() if c.isalnum() or c in " -_").strip()
     nome_base = nome_base.replace(" ", "_") or "texto_colado"
@@ -186,8 +187,6 @@ def salvar_texto_colado(titulo: str, texto: str) -> str:
 
 
 def processar_fontes() -> tuple[bool, str]:
-    """Extrai o que houver em pdfs/, outros/ e urls.txt, e reconstrói o
-    índice de busca. Devolve (sucesso, mensagem)."""
     avisos = []
     algo_processado = False
 
@@ -216,17 +215,112 @@ def processar_fontes() -> tuple[bool, str]:
         return False, "Nenhuma fonte nova encontrada para processar."
 
     if build_index.main() != 0:
-        return False, "Falha ao construir o índice de busca (veja o terminal para detalhes)."
+        return (
+            False,
+            "Falha ao construir o índice de busca (veja o terminal para detalhes).",
+        )
 
     if avisos:
-        return True, "Índice atualizado, mas " + " e ".join(avisos) + " (veja o terminal)."
+        return True, "Índice atualizado, mas " + " e ".join(
+            avisos
+        ) + " (veja o terminal)."
     return True, "Fontes processadas e índice atualizado com sucesso!"
+
+
+def salvar_feedback(pergunta: str, resposta: str, nota: str) -> None:
+    os.makedirs("data", exist_ok=True)
+    registro = {
+        "timestamp": datetime.now().isoformat(),
+        "pergunta": pergunta,
+        "resposta": resposta,
+        "nota": nota,
+    }
+    with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(registro, ensure_ascii=False) + "\n")
+
+
+def registrar_pergunta(pergunta: str, fontes: list[str]) -> None:
+    os.makedirs("data", exist_ok=True)
+    registro = {
+        "timestamp": datetime.now().isoformat(),
+        "pergunta": pergunta,
+        "fontes": fontes,
+    }
+    with open(STATS_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(registro, ensure_ascii=False) + "\n")
+
+
+def carregar_estatisticas() -> dict:
+    if not os.path.exists(STATS_FILE):
+        return {"total_perguntas": 0, "fontes_mais_usadas": []}
+
+    total = 0
+    contador_fontes = Counter()
+    with open(STATS_FILE, "r", encoding="utf-8") as f:
+        for linha in f:
+            linha = linha.strip()
+            if not linha:
+                continue
+            try:
+                registro = json.loads(linha)
+            except json.JSONDecodeError:
+                continue
+            total += 1
+            for fonte in registro.get("fontes", []):
+                contador_fontes[fonte] += 1
+
+    return {
+        "total_perguntas": total,
+        "fontes_mais_usadas": contador_fontes.most_common(5),
+    }
+
+
+def gerar_zip_backup() -> bytes:
+    buffer = io.BytesIO()
+    pastas = [PDF_DIR, OUTROS_DIR, "data", ASSETS_DIR]
+    arquivos_soltos = [URLS_FILE, REGRAS_FILE, "requirements.txt"]
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for pasta in pastas:
+            if not os.path.isdir(pasta):
+                continue
+            for raiz, _dirs, arquivos in os.walk(pasta):
+                for nome in arquivos:
+                    caminho_completo = os.path.join(raiz, nome)
+                    zf.write(caminho_completo, caminho_completo)
+
+        for arquivo in arquivos_soltos:
+            if os.path.exists(arquivo):
+                zf.write(arquivo, arquivo)
+
+    return buffer.getvalue()
+
+
+def gerar_quiz(
+    gen_bundle, texts: list[str], metas: list[dict], fonte: str, n_perguntas: int = 5
+) -> str:
+    indices_fonte = [i for i, m in enumerate(metas) if m["source"] == fonte]
+    if not indices_fonte:
+        return "Não encontrei trechos dessa fonte para gerar o quiz."
+
+    amostra = random.sample(indices_fonte, min(len(indices_fonte), 6))
+    trechos = "\n\n".join(texts[i] for i in amostra)
+
+    prompt = (
+        f"Com base nos trechos abaixo, crie {n_perguntas} perguntas de múltipla escolha "
+        "(4 alternativas cada, indicando a correta) para revisar o conteúdo, no mesmo "
+        "idioma dos trechos. Formate em Markdown, numerando as perguntas.\n\n"
+        f"### Trechos\n{trechos}"
+    )
+
+    try:
+        return gerar_resposta(gen_bundle, prompt, max_new_tokens=800)
+    except Exception as e:
+        return f"Não consegui gerar o quiz: {e}"
 
 
 @st.cache_data
 def carregar_como_data_uri(caminho: str) -> str | None:
-    """Lê um arquivo local (svg/png/jpg) e devolve como data URI base64,
-    para poder usá-lo em CSS/HTML sem depender de um servidor de estáticos."""
     if not os.path.exists(caminho):
         return None
 
@@ -244,7 +338,6 @@ def carregar_como_data_uri(caminho: str) -> str | None:
 
 
 def aplicar_estilo() -> None:
-    """Injeta CSS para o cabeçalho (hero banner) e pequenos ajustes visuais."""
     logo_uri = carregar_como_data_uri(LOGO_EMBLEMA_PATH)
     banner_uri = carregar_como_data_uri(BANNER_PATH)
 
@@ -262,7 +355,6 @@ def aplicar_estilo() -> None:
     st.markdown(
         f"""
         <style>
-        /* Cabeçalho ("hero") com o banner de fundo, a logo e o título */
         .celina-hero {{
             {banner_css}
             background-size: cover;
@@ -295,14 +387,10 @@ def aplicar_estilo() -> None:
             text-transform: uppercase;
             margin-top: 0.3rem;
         }}
-
-        /* Bolhas do chat com leve acento na cor da marca */
         div[data-testid="stChatMessage"] {{
             border-radius: 14px;
             border: 1px solid rgba(159, 123, 255, 0.15);
         }}
-
-        /* Botões com gradiente da marca */
         .stButton > button {{
             background: linear-gradient(135deg, #9F7BFF 0%, #5B8DEF 100%);
             color: #F3EEFF;
@@ -313,8 +401,6 @@ def aplicar_estilo() -> None:
             background: linear-gradient(135deg, #6FD8FF 0%, #9F7BFF 100%);
             color: #1B1030;
         }}
-
-        /* Item de chat na barra lateral (não selecionado) fica mais discreto */
         section[data-testid="stSidebar"] .stButton > button {{
             background: transparent;
             color: #F3EEFF;
@@ -331,18 +417,21 @@ def aplicar_estilo() -> None:
         <div class="celina-hero">
             {logo_html}
             <div class="celina-hero-title">CELINA</div>
-            <div class="celina-hero-subtitle">Inteligência Artificial · Chat sobre seus PDFs</div>
+            <div class="celina-hero-subtitle">Inteligência Artificial · Nivaldo Araújo &copy; 2026</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-@st.cache_resource(show_spinner="Carregando modelos do Celina... (pode demorar na 1ª vez)")
-def carregar():
-    return carregar_recursos()
+@st.cache_resource(
+    show_spinner="Carregando modelos do Celina... (pode demorar na 1ª vez)"
+)
+def carregar(gen_model: str):
+    return carregar_recursos(gen_model)
 
-def renderizar_sidebar() -> None:
+
+def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
     with st.sidebar:
         logo_uri = carregar_como_data_uri(LOGO_EMBLEMA_PATH)
         if logo_uri:
@@ -357,8 +446,12 @@ def renderizar_sidebar() -> None:
             st.session_state.historico = []
             st.rerun()
 
-        with st.expander("Enviar fontes", expanded=not os.path.exists("data/index.faiss")):
-            aba_arquivo, aba_link, aba_texto = st.tabs(["Arquivo", "Link", "Colar texto"])
+        with st.expander(
+            "📄 Enviar fontes", expanded=not os.path.exists("data/index.faiss")
+        ):
+            aba_arquivo, aba_link, aba_texto = st.tabs(
+                ["Arquivo", "Link", "Colar texto"]
+            )
 
             with aba_arquivo:
                 arquivos = st.file_uploader(
@@ -367,9 +460,13 @@ def renderizar_sidebar() -> None:
                     accept_multiple_files=True,
                     key="upload_arquivos",
                 )
-                if st.button("Processar arquivos", use_container_width=True, disabled=not arquivos):
-                    qtd_pdfs, qtd_outros = salvar_arquivos_enviados(arquivos)
-                    with st.spinner(f"Processando {qtd_pdfs + qtd_outros} arquivo(s)..."):
+                if st.button(
+                    "⚙️ Processar arquivos",
+                    use_container_width=True,
+                    disabled=not arquivos,
+                ):
+                    salvar_arquivos_enviados(arquivos)
+                    with st.spinner("Processando arquivo(s)..."):
                         sucesso, mensagem = processar_fontes()
                     if sucesso:
                         carregar.clear()
@@ -384,12 +481,20 @@ def renderizar_sidebar() -> None:
                     placeholder="https://exemplo.com/artigo\nhttps://exemplo.com/outra-pagina",
                     key="input_links",
                 )
-                if st.button("Processar links", use_container_width=True, disabled=not texto_links.strip()):
+                if st.button(
+                    "⚙️ Processar links",
+                    use_container_width=True,
+                    disabled=not texto_links.strip(),
+                ):
                     qtd_novos = salvar_links(texto_links)
                     if qtd_novos == 0:
-                        st.warning("Nenhum link novo (já estavam salvos ou o campo está vazio).")
+                        st.warning(
+                            "Nenhum link novo (já estavam salvos ou o campo está vazio)."
+                        )
                     else:
-                        with st.spinner(f"Baixando e processando {qtd_novos} link(s)..."):
+                        with st.spinner(
+                            f"Baixando e processando {qtd_novos} link(s)..."
+                        ):
                             sucesso, mensagem = processar_fontes()
                         if sucesso:
                             carregar.clear()
@@ -399,10 +504,14 @@ def renderizar_sidebar() -> None:
                             st.error(mensagem)
 
             with aba_texto:
-                titulo_texto = st.text_input("Nome para essa fonte", placeholder="ex: anotacoes-aula-5")
-                texto_colado = st.text_area("Cole o texto aqui", height=140, key="input_texto_colado")
+                titulo_texto = st.text_input(
+                    "Nome para essa fonte", placeholder="ex: anotacoes-aula-5"
+                )
+                texto_colado = st.text_area(
+                    "Cole o texto aqui", height=140, key="input_texto_colado"
+                )
                 if st.button(
-                    "Processar texto",
+                    "⚙️ Processar texto",
                     use_container_width=True,
                     disabled=not texto_colado.strip() or not titulo_texto.strip(),
                 ):
@@ -417,7 +526,6 @@ def renderizar_sidebar() -> None:
                         st.error(mensagem)
 
         st.divider()
-
         st.markdown("**Conversas**")
         chats = listar_chats()
 
@@ -430,7 +538,9 @@ def renderizar_sidebar() -> None:
                 rotulo = ("➤ " if selecionado else "") + chat["title"]
 
                 with col_titulo:
-                    if st.button(rotulo, key=f"abrir_{chat['id']}", use_container_width=True):
+                    if st.button(
+                        rotulo, key=f"abrir_{chat['id']}", use_container_width=True
+                    ):
                         st.session_state.chat_id = chat["id"]
                         st.session_state.historico = carregar_chat(chat["id"])
                         st.rerun()
@@ -444,8 +554,29 @@ def renderizar_sidebar() -> None:
                         st.rerun()
 
         st.divider()
+        with st.expander("🎛️ Configurações da busca"):
+            nomes_modelos = list(MODELOS_DISPONIVEIS.keys())
+            modelo_atual = st.session_state.get("modelo_nome", nomes_modelos[1])
+            escolha = st.selectbox(
+                "Modelo de geração",
+                nomes_modelos,
+                index=nomes_modelos.index(modelo_atual),
+            )
+            st.session_state.modelo_nome = escolha
+            st.session_state.gen_model = MODELOS_DISPONIVEIS[escolha]
 
-        with st.expander("Regras de formato das respostas"):
+            opcoes_fonte = ["Todas as fontes"] + fontes_disponiveis
+            fonte_escolhida = st.selectbox("Restringir busca a uma fonte", opcoes_fonte)
+            st.session_state.fonte_filtro = (
+                None if fonte_escolhida == "Todas as fontes" else fonte_escolhida
+            )
+
+            st.session_state.modo_citacao = st.toggle(
+                "Modo 'só citação' (devolve o trecho original, sem reescrever)",
+                value=st.session_state.get("modo_citacao", False),
+            )
+
+        with st.expander("⚙️ Regras de formato das respostas"):
             texto_regras = st.text_area(
                 "Uma regra por linha (linhas com # são ignoradas):",
                 value=ler_regras_raw(),
@@ -454,7 +585,7 @@ def renderizar_sidebar() -> None:
             )
             col_salvar, col_restaurar = st.columns(2)
             with col_salvar:
-                if st.button("Salvar", use_container_width=True):
+                if st.button("💾 Salvar", use_container_width=True):
                     salvar_regras_raw(texto_regras)
                     st.success("Regras salvas!")
             with col_restaurar:
@@ -462,12 +593,46 @@ def renderizar_sidebar() -> None:
                     salvar_regras_raw(REGRAS_PADRAO)
                     st.rerun()
 
+        if fontes_disponiveis:
+            with st.expander("🧠 Gerar quiz de revisão"):
+                fonte_quiz = st.selectbox("Fonte", fontes_disponiveis, key="fonte_quiz")
+                if st.button("Gerar quiz", use_container_width=True):
+                    with st.spinner("Gerando perguntas..."):
+                        quiz = gerar_quiz(
+                            st.session_state["_gen_bundle"],
+                            st.session_state["_texts"],
+                            st.session_state["_metas"],
+                            fonte_quiz,
+                        )
+                    st.markdown(quiz)
+
+        with st.expander("📊 Estatísticas"):
+            stats = carregar_estatisticas()
+            st.metric("Perguntas feitas", stats["total_perguntas"])
+            if stats["fontes_mais_usadas"]:
+                st.caption("Fontes mais consultadas:")
+                for fonte, qtd in stats["fontes_mais_usadas"]:
+                    st.write(f"- {fonte} ({qtd}x)")
+
+        with st.expander("💾 Backup"):
+            st.caption(
+                "Baixe seus PDFs, outras fontes, conversas, regras e índice num único .zip."
+            )
+            if st.button("Gerar arquivo de backup", use_container_width=True):
+                dados_zip = gerar_zip_backup()
+                st.download_button(
+                    "⬇️ Baixar backup.zip",
+                    data=dados_zip,
+                    file_name=f"celina_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
+
         st.divider()
         st.subheader("Sobre a Celina")
         st.write(
-            "Busca os trechos mais relevantes dos seus PDFs e usa um modelo "
-            "local para responder com base neles, mostrando também imagens "
-            "ilustrativas das páginas usadas quando disponíveis."
+            "Busca os trechos mais relevantes das suas fontes e usa um modelo "
+            "local para responder com base neles. Comandos: `/limpar`, `/fontes`."
         )
 
 
@@ -483,20 +648,29 @@ def main() -> None:
             st.session_state.chat_id = novo_chat_id()
             st.session_state.historico = []
 
- 
-    renderizar_sidebar()
+    gen_model = st.session_state.get("gen_model", GEN_MODEL_PADRAO)
 
     try:
-        index, embedder, gen_bundle, texts, metas, indice_imagens = carregar()
+        index, embedder, gen_bundle, texts, metas, indice_imagens = carregar(gen_model)
     except SystemExit:
+        renderizar_sidebar([])
         st.info(
             "Nenhuma fonte indexada ainda. Use **📄 Enviar fontes**, na barra "
             "lateral, para enviar PDFs, textos, planilhas ou links e criar o índice de busca."
         )
         return
 
-   
-    for msg in st.session_state.historico:
+    st.session_state["_gen_bundle"] = gen_bundle
+    st.session_state["_texts"] = texts
+    st.session_state["_metas"] = metas
+
+    fontes_disponiveis = sorted({m["source"] for m in metas})
+    renderizar_sidebar(fontes_disponiveis)
+
+    fonte_filtro = st.session_state.get("fonte_filtro")
+    modo_citacao = st.session_state.get("modo_citacao", False)
+
+    for idx, msg in enumerate(st.session_state.historico):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             if msg.get("imagens"):
@@ -508,24 +682,90 @@ def main() -> None:
                 with st.expander("Fontes consultadas"):
                     for fonte in msg["fontes"]:
                         st.markdown(f"- {fonte}")
+            if msg["role"] == "assistant" and not msg.get("feedback_dado"):
+                col_up, col_down, _resto = st.columns([1, 1, 8])
+                with col_up:
+                    if st.button("👍", key=f"up_{idx}"):
+                        pergunta_anterior = (
+                            st.session_state.historico[idx - 1]["content"]
+                            if idx > 0
+                            else ""
+                        )
+                        salvar_feedback(pergunta_anterior, msg["content"], "positiva")
+                        msg["feedback_dado"] = True
+                        salvar_chat(
+                            st.session_state.chat_id, st.session_state.historico
+                        )
+                        st.rerun()
+                with col_down:
+                    if st.button("👎", key=f"down_{idx}"):
+                        pergunta_anterior = (
+                            st.session_state.historico[idx - 1]["content"]
+                            if idx > 0
+                            else ""
+                        )
+                        salvar_feedback(pergunta_anterior, msg["content"], "negativa")
+                        msg["feedback_dado"] = True
+                        salvar_chat(
+                            st.session_state.chat_id, st.session_state.historico
+                        )
+                        st.rerun()
 
-    pergunta = st.chat_input("Pergunte algo sobre seus PDFs...")
+    pergunta = st.chat_input("Pergunte algo, ou use /limpar, /fontes...")
 
     if pergunta:
+        comando = pergunta.strip().lower()
+
+        if comando == "/limpar":
+            st.session_state.historico = []
+            salvar_chat(st.session_state.chat_id, st.session_state.historico)
+            st.rerun()
+
+        if comando == "/fontes":
+            st.session_state.historico.append({"role": "user", "content": pergunta})
+            lista = (
+                "\n".join(f"- {f}" for f in fontes_disponiveis)
+                or "Nenhuma fonte indexada."
+            )
+            st.session_state.historico.append(
+                {
+                    "role": "assistant",
+                    "content": f"Fontes indexadas atualmente:\n{lista}",
+                }
+            )
+            salvar_chat(st.session_state.chat_id, st.session_state.historico)
+            st.rerun()
+
         st.session_state.historico.append({"role": "user", "content": pergunta})
         with st.chat_message("user"):
             st.markdown(pergunta)
 
         with st.chat_message("assistant"):
-            with st.spinner("Buscando nos documentos e gerando resposta..."):
-                contextos = retrieve(index, embedder, texts, metas, pergunta, k=TOP_K)
+            with st.spinner("Buscando nas fontes e gerando resposta..."):
+                contextos = retrieve(
+                    index,
+                    embedder,
+                    texts,
+                    metas,
+                    pergunta,
+                    k=TOP_K,
+                    fonte_filtro=fonte_filtro,
+                )
 
-                if not contextos:
-                    resposta = "Não encontrei nada relevante nos documentos indexados."
+                if not contextos or melhor_score(contextos) < LIMIAR_CONFIANCA_PADRAO:
+                    resposta = (
+                        "Não encontrei nada relevante o bastante nas fontes indexadas."
+                    )
                     fontes = []
                     imagens = []
+                elif modo_citacao:
+                    resposta = resposta_somente_citacao(contextos)
+                    fontes = formatar_fontes(contextos).split("\n")
+                    imagens = obter_imagens_dos_contextos(contextos, indice_imagens)
                 else:
-                    prompt = build_prompt(contextos, pergunta)
+                    prompt = build_prompt(
+                        contextos, pergunta, historico=st.session_state.historico[:-1]
+                    )
                     try:
                         resposta = gerar_resposta(gen_bundle, prompt)
                     except Exception as e:
@@ -538,9 +778,13 @@ def main() -> None:
                         if chave in vistos:
                             continue
                         vistos.add(chave)
-                        fontes.append(f"{meta['source']} (página {meta['page']}, relevância {score:.2f})")
+                        fontes.append(
+                            f"{meta['source']} (página {meta['page']}, relevância {score:.2f})"
+                        )
 
                     imagens = obter_imagens_dos_contextos(contextos, indice_imagens)
+
+                registrar_pergunta(pergunta, [m["source"] for _t, m, _s in contextos])
 
             st.markdown(resposta)
             if imagens:
@@ -554,12 +798,16 @@ def main() -> None:
                         st.markdown(f"- {fonte}")
 
         st.session_state.historico.append(
-            {"role": "assistant", "content": resposta, "fontes": fontes, "imagens": imagens}
+            {
+                "role": "assistant",
+                "content": resposta,
+                "fontes": fontes,
+                "imagens": imagens,
+            }
         )
 
-
         salvar_chat(st.session_state.chat_id, st.session_state.historico)
-        st.rerun() 
+        st.rerun()
 
 
 if __name__ == "__main__":
