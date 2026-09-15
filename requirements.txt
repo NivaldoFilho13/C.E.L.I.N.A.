@@ -10,6 +10,8 @@ python-docx
 openpyxl
 requests
 beautifulsoup4
+PyMuPDF
+pytesseract
 
 # Dica: se "pip install torch" baixar uma versão muito grande (com suporte
 # a GPU que você não vai usar), instale a versão CPU-only primeiro com:
