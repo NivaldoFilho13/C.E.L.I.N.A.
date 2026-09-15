@@ -73,22 +73,94 @@ relevante para responder à pergunta.
   pequenos, como marcadores de lista). Quando uma resposta usa uma página
   que tem imagens, elas aparecem junto com a resposta na interface web
   (no terminal, o caminho do arquivo é mostrado em texto).
+- **OCR para PDFs escaneados**: quando uma página não tem texto
+  selecionável (PDF de imagem/digitalizado), a Celina tenta reconhecer o
+  texto via OCR automaticamente. Precisa do Tesseract-OCR instalado no
+  sistema — veja "OCR" mais abaixo.
+- **Memória de conversa**: perguntas de acompanhamento ("e sobre isso, o
+  que mais diz?") agora usam as últimas trocas da conversa como contexto.
+- **Threshold de confiança**: se a busca não encontrar nada realmente
+  relevante, a Celina admite que não sabe em vez de forçar uma resposta
+  fraca.
+- **Modo "só citação"**: ative em ⚙️ Configurações da busca para receber o
+  trecho original tal como está no documento, sem reescrita — útil quando
+  a fidelidade exata ao texto importa.
+- **Filtro por fonte**: restrinja a busca a um único PDF/arquivo/link
+  específico, em vez de todas as fontes indexadas.
+- **Seletor de modelo**: escolha entre um modelo mais rápido (0.5B), o
+  equilibrado padrão (1.5B) ou um de mais qualidade (3B, mais lento).
+- **Resposta no idioma da pergunta**: não força mais português — responde
+  no mesmo idioma em que a pergunta foi feita.
+- **Feedback 👍/👎**: avalie cada resposta; fica salvo em
+  `data/feedback.jsonl` para você revisar depois.
+- **Comandos de chat**: digite `/limpar` para começar do zero, ou
+  `/fontes` para listar tudo que está indexado no momento.
+- **Painel de estatísticas**: quantas perguntas você já fez e quais fontes
+  são mais consultadas, na barra lateral.
+- **Backup em um clique**: baixe um `.zip` com PDFs, outras fontes,
+  conversas, regras e índice — útil pra levar pra outro PC.
+- **Gerador de quiz**: escolha uma fonte na barra lateral e gere 5
+  perguntas de múltipla escolha pra revisar o conteúdo.
 
 Requisitos
 - Python 3.8+
 - (Opcional) Virtualenv/venv
 - Internet na primeira execução para baixar modelos
 
+## OCR (PDFs escaneados)
+
+O reconhecimento de texto em si (`pytesseract`) depende do **Tesseract-OCR**,
+um programa separado que não vem pelo `pip` — precisa instalar à parte:
+
+- **Windows**: baixe o instalador em
+  https://github.com/UB-Mannheim/tesseract/wiki e marque a opção de
+  adicionar ao PATH durante a instalação (ou adicione manualmente depois).
+  Para reconhecer português, marque o pacote de idioma "Portuguese"
+  durante a instalação.
+- Depois de instalado, `python extract_pdfs.py` já tenta OCR
+  automaticamente em páginas sem texto — não precisa configurar nada no
+  código.
+- Sem o Tesseract instalado, o OCR é simplesmente pulado (com um aviso no
+  terminal) e o resto continua funcionando normalmente.
+
+## O que NÃO foi incluído (e por quê)
+
+Para manter o que foi entregue funcionando de forma confiável, ficaram de
+fora por ora:
+
+- **Reranking dos resultados** (um segundo modelo reordenando a busca) —
+  precisa de mais um modelo e mais tempo de resposta; posso adicionar
+  depois se fizer falta na prática.
+- **Coleções separadas** (ex: índice só de Genética, outro só de Física) —
+  mudança estrutural maior nos scripts; posso montar isso numa próxima
+  rodada.
+- **Indexação incremental** (só reprocessar o que é novo, em vez de tudo)
+  — hoje `build_index.py` reconstrói o índice inteiro a cada vez; funciona
+  bem até algumas centenas de páginas, mas fica lento em bases muito
+  grandes.
+- **Destacar o trecho exato dentro da imagem da página** — não é
+  confiável sem mapear a posição exata do texto na imagem (precisaria de
+  OCR com coordenadas), risco de marcar o lugar errado.
+- **Tema claro/escuro**: não precisa de código — já vem pronto no menu
+  "⋮" (canto superior direito) → **Settings** → **Choose app theme**.
+- **Acesso de outros dispositivos na sua rede**: também não precisa de
+  código, só rodar com um parâmetro extra:
+  `streamlit run app.py --server.address 0.0.0.0` — depois acesse pelo
+  IP do seu PC (ex: `http://192.168.0.x:8501`) a partir do celular/outro
+  PC na mesma rede Wi-Fi.
+
 Estrutura dos arquivos
 - `requirements.txt` — dependências.
-- `extract_pdfs.py` — extrai texto das páginas dos PDFs, limpa, divide em
-  chunks com overlap e salva em `data/documents.jsonl`.
-- `build_index.py` — gera embeddings com `all-MiniLM-L6-v2` e cria índice
-  FAISS (`data/index.faiss`) + metadados (`data/docs.pkl`).
-- `chat.py` — loop de chat: recupera trechos relevantes, monta um prompt
-  anti-alucinação e gera resposta com `google/flan-t5-small` (CPU),
-  mostrando as fontes usadas.
+- `text_utils.py` — limpeza e divisão de texto em chunks (compartilhado).
+- `extract_pdfs.py` — extrai texto/imagens dos PDFs (com OCR de apoio).
+- `extract_outros.py` — extrai texto, Word, planilhas e páginas da web.
+- `build_index.py` — gera embeddings e cria o índice FAISS.
+- `chat.py` — funções principais do chat (busca, prompt, geração) e o
+  loop de terminal.
+- `app.py` — interface web (Streamlit) com todos os recursos.
 - `pdfs/` — coloque aqui seus arquivos `.pdf`.
+- `outros/` — coloque aqui `.txt`, `.md`, `.docx`, `.csv`, `.xlsx`.
+- `urls.txt` — uma URL por linha, para páginas da web.
 - `data/` — saída dos scripts (gerado automaticamente).
 
 ## Instalação (passo a passo)
