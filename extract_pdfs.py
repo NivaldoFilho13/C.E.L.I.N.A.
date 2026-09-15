@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import sys
@@ -14,11 +15,51 @@ IMAGES_INDEX_FILE = "data/images_index.json"
 
 IMAGEM_TAMANHO_MINIMO = 120
 
+try:
+    import fitz  # PyMuPDF
+    import pytesseract
+    from PIL import Image
+
+    OCR_DISPONIVEL = True
+except ImportError:
+    OCR_DISPONIVEL = False
+
+OCR_DPI = 200
+OCR_IDIOMA = "por"
+_ocr_avisado = False
+
+
+def ocr_pagina(caminho_pdf: str, page_num_idx: int) -> str:
+    global _ocr_avisado
+    if not OCR_DISPONIVEL:
+        if not _ocr_avisado:
+            print(
+                "  [aviso] OCR não disponível (falta 'PyMuPDF'/'pytesseract'/Tesseract-OCR). "
+                "Páginas sem texto selecionável serão puladas. Veja o README, seção OCR."
+            )
+            _ocr_avisado = True
+        return ""
+
+    try:
+        doc = fitz.open(caminho_pdf)
+        pagina = doc[page_num_idx]
+        pix = pagina.get_pixmap(dpi=OCR_DPI)
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        texto = pytesseract.image_to_string(img, lang=OCR_IDIOMA)
+        doc.close()
+        return texto
+    except Exception as e:
+        if not _ocr_avisado:
+            print(
+                f"  [aviso] OCR falhou ({e}). Verifique se o Tesseract-OCR está instalado e no PATH."
+            )
+            _ocr_avisado = True
+        return ""
+
 
 def extrair_imagens_da_pagina(
     page, nome_base: str, page_num: int, out_dir: str
 ) -> list[str]:
-    """Salva em disco as imagens 'grandes o suficiente' de uma página do PDF."""
     caminhos: list[str] = []
     try:
         imagens = page.images
@@ -27,7 +68,7 @@ def extrair_imagens_da_pagina(
 
     for idx, img in enumerate(imagens):
         try:
-            pil_img = img.image
+            pil_img = img.image  # objeto PIL.Image (lazy)
             largura, altura = pil_img.size
             if largura < IMAGEM_TAMANHO_MINIMO or altura < IMAGEM_TAMANHO_MINIMO:
                 continue
@@ -46,7 +87,6 @@ def extrair_imagens_da_pagina(
 
 
 def extract_from_pdf(path: str, images_dir: str) -> tuple[list[dict], dict]:
-    """Extrai texto (em chunks) e imagens de um PDF, página por página."""
     try:
         reader = PdfReader(path)
     except Exception as e:
@@ -71,6 +111,11 @@ def extract_from_pdf(path: str, images_dir: str) -> tuple[list[dict], dict]:
             texto_bruto = ""
 
         texto = limpar_texto(texto_bruto)
+
+        if not texto:
+            texto_ocr = ocr_pagina(path, i)
+            texto = limpar_texto(texto_ocr)
+
         if texto:
             for j, chunk in enumerate(dividir_em_chunks(texto)):
                 if len(chunk) < 20:
@@ -118,9 +163,9 @@ def main() -> int:
 
     if not all_docs:
         print(
-            "AVISO: nenhum texto foi extraído de nenhum PDF. "
-            "Eles podem ser digitalizados/escaneados (imagem) — nesse caso "
-            "seria necessário OCR (ex: Tesseract + pytesseract) antes disso."
+            "AVISO: nenhum texto foi extraído de nenhum PDF, mesmo com OCR. "
+            "Verifique se os PDFs realmente têm conteúdo, ou se o Tesseract-OCR "
+            "está instalado corretamente (veja o README, seção OCR)."
         )
         return 1
 
