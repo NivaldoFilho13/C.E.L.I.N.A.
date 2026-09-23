@@ -22,9 +22,11 @@ Resumo rápido
 |---|---|---|
 | PDF | `pdfs/` | nada extra |
 | Texto (.txt, .md) | `outros/` | nada extra |
+| Legenda (.srt) | `outros/` | nada extra |
 | Word (.docx) | `outros/` | `pip install python-docx` (já no requirements.txt) |
 | Planilha (.csv, .xlsx) | `outros/` | `pip install openpyxl` (já no requirements.txt) |
 | Página da web | uma URL por linha em `urls.txt` | `pip install requests beautifulsoup4` (já no requirements.txt) |
+| Artigo da Wikipédia | pela interface web, aba "Wikipédia" (ou títulos em `wikipedia.txt`) | `pip install requests` (já no requirements.txt) |
 | Texto colado | pela interface web, aba "Colar texto" | nada extra |
 
 Planilhas são divididas em blocos de ~20 linhas (cada linha formatada como
@@ -65,9 +67,9 @@ relevante para responder à pergunta.
   (.txt/.md), Word (.docx), planilhas (.csv/.xlsx) e páginas da web — veja
   a tabela "Fontes suportadas" no topo deste arquivo.
 - **Envio de fontes pela interface**: não precisa mais rodar scripts no
-  terminal — na barra lateral, "📄 Enviar fontes" tem 3 abas (arquivo,
-  link, colar texto). A Celina extrai o conteúdo e reconstrói o índice
-  de busca sozinha.
+  terminal — na barra lateral, "📄 Enviar fontes" tem 4 abas (arquivo,
+  link, Wikipédia, colar texto). A Celina extrai o conteúdo e reconstrói o
+  índice de busca sozinha.
 - **Imagens ilustrativas**: `extract_pdfs.py` agora também extrai as
   figuras/diagramas embutidos em cada página do PDF (ignorando ícones
   pequenos, como marcadores de lista). Quando uma resposta usa uma página
@@ -102,10 +104,25 @@ relevante para responder à pergunta.
 - **Gerador de quiz**: escolha uma fonte na barra lateral e gere 5
   perguntas de múltipla escolha pra revisar o conteúdo.
 
+- **Wikipédia como fonte**: na aba "Wikipédia" (dentro de "📄 Enviar
+  fontes"), busque um termo, escolha os artigos encontrados e adicione-os
+  permanentemente ao índice — igual a qualquer outra fonte.
+- **Busca ao vivo na Wikipédia**: ative "Buscar na Wikipédia quando não
+  achar nas fontes locais" em ⚙️ Configurações da busca — quando suas
+  fontes locais não tiverem a resposta, a Celina busca ao vivo (precisa de
+  internet) e deixa claro na fonte que a informação veio de fora dos seus
+  documentos, não salvando nada automaticamente.
+- **Gerador de quiz melhorado**: as perguntas agora são geradas a partir de
+  uma janela contínua de trechos (na ordem original do documento, não mais
+  espalhados aleatoriamente), e cada pergunta vem com 1-2 frases de
+  contexto antes dela — pra fazer sentido mesmo sem ter lido o texto
+  original.
+
 Requisitos
 - Python 3.8+
 - (Opcional) Virtualenv/venv
-- Internet na primeira execução para baixar modelos
+- Internet na primeira execução para baixar modelos, e para as fontes que
+  buscam da web (links, Wikipédia)
 
 ## OCR (PDFs escaneados)
 
