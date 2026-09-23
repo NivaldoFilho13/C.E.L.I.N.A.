@@ -32,7 +32,8 @@ TOP_K = 4
 PDF_DIR = "pdfs"
 OUTROS_DIR = "outros"
 URLS_FILE = "urls.txt"
-EXTENSOES_OUTROS = (".txt", ".md", ".docx", ".csv", ".xlsx")
+WIKI_FILE = "wikipedia.txt"
+EXTENSOES_OUTROS = (".txt", ".md", ".docx", ".csv", ".xlsx", ".srt")
 
 ASSETS_DIR = "assets"
 LOGO_EMBLEMA_PATH = os.path.join(ASSETS_DIR, "logo-emblem.svg")
@@ -186,6 +187,24 @@ def salvar_texto_colado(titulo: str, texto: str) -> str:
     return nome_arquivo
 
 
+def salvar_titulos_wikipedia(titulos: list[str]) -> int:
+    if not titulos:
+        return 0
+
+    existentes = set()
+    if os.path.exists(WIKI_FILE):
+        with open(WIKI_FILE, "r", encoding="utf-8") as f:
+            existentes = {l.strip() for l in f if l.strip()}
+
+    novos = [t for t in titulos if t not in existentes]
+    if novos:
+        with open(WIKI_FILE, "a", encoding="utf-8") as f:
+            for titulo in novos:
+                f.write(titulo + "\n")
+
+    return len(novos)
+
+
 def processar_fontes() -> tuple[bool, str]:
     avisos = []
     algo_processado = False
@@ -205,11 +224,16 @@ def processar_fontes() -> tuple[bool, str]:
     tem_urls = os.path.exists(URLS_FILE) and any(
         l.strip() for l in open(URLS_FILE, encoding="utf-8")
     )
-    if tem_outros or tem_urls:
+    tem_wiki = os.path.exists(WIKI_FILE) and any(
+        l.strip() for l in open(WIKI_FILE, encoding="utf-8")
+    )
+    if tem_outros or tem_urls or tem_wiki:
         if extract_outros.main() == 0:
             algo_processado = True
         else:
-            avisos.append("houve um problema extraindo os outros arquivos/links")
+            avisos.append(
+                "houve um problema extraindo os outros arquivos/links/artigos"
+            )
 
     if not algo_processado:
         return False, "Nenhuma fonte nova encontrada para processar."
@@ -296,25 +320,57 @@ def gerar_zip_backup() -> bytes:
     return buffer.getvalue()
 
 
+def buscar_resposta_wikipedia_ao_vivo(pergunta: str, max_chars: int = 3000):
+    titulos = extract_outros.buscar_titulos_wikipedia(pergunta, limite=1)
+    if not titulos:
+        return []
+
+    titulo = titulos[0]
+    texto = extract_outros.extrair_wikipedia(titulo)
+    if not texto:
+        return []
+
+    meta = {
+        "source": f"Wikipédia: {titulo} (busca ao vivo, não verificado)",
+        "page": 1,
+        "chunk": 0,
+    }
+    return [(texto[:max_chars], meta, 1.0)]
+
+
 def gerar_quiz(
     gen_bundle, texts: list[str], metas: list[dict], fonte: str, n_perguntas: int = 5
 ) -> str:
     indices_fonte = [i for i, m in enumerate(metas) if m["source"] == fonte]
+    indices_fonte.sort(key=lambda i: (metas[i]["page"], metas[i].get("chunk", 0)))
+
     if not indices_fonte:
         return "Não encontrei trechos dessa fonte para gerar o quiz."
 
-    amostra = random.sample(indices_fonte, min(len(indices_fonte), 6))
-    trechos = "\n\n".join(texts[i] for i in amostra)
+    JANELA = min(len(indices_fonte), 8)
+    inicio = random.randint(0, len(indices_fonte) - JANELA)
+    janela_indices = indices_fonte[inicio : inicio + JANELA]
+    trechos = "\n\n".join(texts[i] for i in janela_indices)
 
     prompt = (
-        f"Com base nos trechos abaixo, crie {n_perguntas} perguntas de múltipla escolha "
-        "(4 alternativas cada, indicando a correta) para revisar o conteúdo, no mesmo "
-        "idioma dos trechos. Formate em Markdown, numerando as perguntas.\n\n"
-        f"### Trechos\n{trechos}"
+        f"Com base no texto abaixo, crie {n_perguntas} perguntas de múltipla escolha "
+        "para revisar o conteúdo, no mesmo idioma do texto. Cada pergunta deve ser "
+        "AUTOCONTIDA: antes da pergunta em si, escreva 1-2 frases de contexto "
+        "explicando brevemente do que se trata, para que a pergunta faça sentido "
+        "mesmo para quem não leu o texto original. Não faça perguntas vagas ou que "
+        "dependam de saber a que trecho elas se referem.\n\n"
+        "Formate cada pergunta em Markdown exatamente assim:\n\n"
+        "**Pergunta N**\n"
+        "*Contexto:* (1-2 frases de contextualização)\n\n"
+        "(a pergunta em si)\n"
+        "a) ...\nb) ...\nc) ...\nd) ...\n\n"
+        "**Resposta correta:** (letra) — (breve justificativa citando o texto)\n\n"
+        "---\n\n"
+        f"### Texto\n{trechos}"
     )
 
     try:
-        return gerar_resposta(gen_bundle, prompt, max_new_tokens=800)
+        return gerar_resposta(gen_bundle, prompt, max_new_tokens=900)
     except Exception as e:
         return f"Não consegui gerar o quiz: {e}"
 
@@ -417,7 +473,7 @@ def aplicar_estilo() -> None:
         <div class="celina-hero">
             {logo_html}
             <div class="celina-hero-title">CELINA</div>
-            <div class="celina-hero-subtitle">Inteligência Artificial · Nivaldo Araújo &copy; 2026</div>
+            <div class="celina-hero-subtitle">Inteligência Artificial · Nivaldo Araújo &copy 2026</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -447,21 +503,21 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
             st.rerun()
 
         with st.expander(
-            "📄 Enviar fontes", expanded=not os.path.exists("data/index.faiss")
+            "Enviar fontes", expanded=not os.path.exists("data/index.faiss")
         ):
-            aba_arquivo, aba_link, aba_texto = st.tabs(
-                ["Arquivo", "Link", "Colar texto"]
+            aba_arquivo, aba_link, aba_wiki, aba_texto = st.tabs(
+                ["Arquivo", "Link", "Wikipédia", "Colar texto"]
             )
 
             with aba_arquivo:
                 arquivos = st.file_uploader(
-                    "PDF, TXT, MD, DOCX, CSV ou XLSX",
-                    type=["pdf", "txt", "md", "docx", "csv", "xlsx"],
+                    "PDF, TXT, MD, DOCX, CSV, XLSX ou SRT",
+                    type=["pdf", "txt", "md", "docx", "csv", "xlsx", "srt"],
                     accept_multiple_files=True,
                     key="upload_arquivos",
                 )
                 if st.button(
-                    "⚙️ Processar arquivos",
+                    "Processar arquivos",
                     use_container_width=True,
                     disabled=not arquivos,
                 ):
@@ -482,7 +538,7 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                     key="input_links",
                 )
                 if st.button(
-                    "⚙️ Processar links",
+                    "Processar links",
                     use_container_width=True,
                     disabled=not texto_links.strip(),
                 ):
@@ -503,6 +559,48 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                         else:
                             st.error(mensagem)
 
+            with aba_wiki:
+                termo_busca = st.text_input(
+                    "Buscar na Wikipédia",
+                    placeholder="ex: fotossíntese",
+                    key="busca_wiki_termo",
+                )
+                if st.button(
+                    "Buscar", use_container_width=True, disabled=not termo_busca.strip()
+                ):
+                    with st.spinner("Buscando na Wikipédia..."):
+                        st.session_state["resultados_wiki"] = (
+                            extract_outros.buscar_titulos_wikipedia(termo_busca)
+                        )
+
+                resultados_wiki = st.session_state.get("resultados_wiki", [])
+                if resultados_wiki:
+                    selecionados = st.multiselect(
+                        "Artigos encontrados — escolha quais adicionar", resultados_wiki
+                    )
+                    if st.button(
+                        "Adicionar e processar",
+                        use_container_width=True,
+                        disabled=not selecionados,
+                    ):
+                        qtd_novos = salvar_titulos_wikipedia(selecionados)
+                        if qtd_novos == 0:
+                            st.warning("Esses artigos já estavam salvos.")
+                        else:
+                            with st.spinner(
+                                f"Baixando e processando {qtd_novos} artigo(s)..."
+                            ):
+                                sucesso, mensagem = processar_fontes()
+                            if sucesso:
+                                carregar.clear()
+                                st.success(mensagem)
+                                st.session_state.pop("resultados_wiki", None)
+                                st.rerun()
+                            else:
+                                st.error(mensagem)
+                elif termo_busca:
+                    st.caption("Clique em Buscar para ver os artigos disponíveis.")
+
             with aba_texto:
                 titulo_texto = st.text_input(
                     "Nome para essa fonte", placeholder="ex: anotacoes-aula-5"
@@ -511,7 +609,7 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                     "Cole o texto aqui", height=140, key="input_texto_colado"
                 )
                 if st.button(
-                    "⚙️ Processar texto",
+                    "Processar texto",
                     use_container_width=True,
                     disabled=not texto_colado.strip() or not titulo_texto.strip(),
                 ):
@@ -554,7 +652,7 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                         st.rerun()
 
         st.divider()
-        with st.expander("🎛️ Configurações da busca"):
+        with st.expander("Configurações da busca"):
             nomes_modelos = list(MODELOS_DISPONIVEIS.keys())
             modelo_atual = st.session_state.get("modelo_nome", nomes_modelos[1])
             escolha = st.selectbox(
@@ -576,6 +674,14 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                 value=st.session_state.get("modo_citacao", False),
             )
 
+            st.session_state.wiki_fallback = st.toggle(
+                "Buscar na Wikipédia quando não achar nas fontes locais (usa internet)",
+                value=st.session_state.get("wiki_fallback", False),
+                help="A resposta é gerada a partir de um artigo baixado ao vivo da "
+                "Wikipédia, sem salvá-lo como fonte permanente — fica claro nas "
+                "fontes consultadas que a informação não veio dos seus documentos.",
+            )
+
         with st.expander("⚙️ Regras de formato das respostas"):
             texto_regras = st.text_area(
                 "Uma regra por linha (linhas com # são ignoradas):",
@@ -585,7 +691,7 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
             )
             col_salvar, col_restaurar = st.columns(2)
             with col_salvar:
-                if st.button("💾 Salvar", use_container_width=True):
+                if st.button("Salvar", use_container_width=True):
                     salvar_regras_raw(texto_regras)
                     st.success("Regras salvas!")
             with col_restaurar:
@@ -594,7 +700,7 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                     st.rerun()
 
         if fontes_disponiveis:
-            with st.expander("🧠 Gerar quiz de revisão"):
+            with st.expander("Gerar quiz de revisão"):
                 fonte_quiz = st.selectbox("Fonte", fontes_disponiveis, key="fonte_quiz")
                 if st.button("Gerar quiz", use_container_width=True):
                     with st.spinner("Gerando perguntas..."):
@@ -606,7 +712,7 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                         )
                     st.markdown(quiz)
 
-        with st.expander("📊 Estatísticas"):
+        with st.expander("Estatísticas"):
             stats = carregar_estatisticas()
             st.metric("Perguntas feitas", stats["total_perguntas"])
             if stats["fontes_mais_usadas"]:
@@ -614,14 +720,14 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                 for fonte, qtd in stats["fontes_mais_usadas"]:
                     st.write(f"- {fonte} ({qtd}x)")
 
-        with st.expander("💾 Backup"):
+        with st.expander("Backup"):
             st.caption(
                 "Baixe seus PDFs, outras fontes, conversas, regras e índice num único .zip."
             )
             if st.button("Gerar arquivo de backup", use_container_width=True):
                 dados_zip = gerar_zip_backup()
                 st.download_button(
-                    "⬇️ Baixar backup.zip",
+                    "⬇ Baixar backup.zip",
                     data=dados_zip,
                     file_name=f"celina_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
                     mime="application/zip",
@@ -655,7 +761,7 @@ def main() -> None:
     except SystemExit:
         renderizar_sidebar([])
         st.info(
-            "Nenhuma fonte indexada ainda. Use **📄 Enviar fontes**, na barra "
+            "Nenhuma fonte indexada ainda. Use **Enviar fontes**, na barra "
             "lateral, para enviar PDFs, textos, planilhas ou links e criar o índice de busca."
         )
         return
@@ -751,8 +857,21 @@ def main() -> None:
                     k=TOP_K,
                     fonte_filtro=fonte_filtro,
                 )
+                veio_da_wikipedia = False
 
                 if not contextos or melhor_score(contextos) < LIMIAR_CONFIANCA_PADRAO:
+                    if st.session_state.get("wiki_fallback", False):
+                        contextos_wiki = buscar_resposta_wikipedia_ao_vivo(pergunta)
+                        if contextos_wiki:
+                            contextos = contextos_wiki
+                            veio_da_wikipedia = True
+
+                sem_resultado = not contextos or (
+                    not veio_da_wikipedia
+                    and melhor_score(contextos) < LIMIAR_CONFIANCA_PADRAO
+                )
+
+                if sem_resultado:
                     resposta = (
                         "Não encontrei nada relevante o bastante nas fontes indexadas."
                     )
@@ -761,7 +880,11 @@ def main() -> None:
                 elif modo_citacao:
                     resposta = resposta_somente_citacao(contextos)
                     fontes = formatar_fontes(contextos).split("\n")
-                    imagens = obter_imagens_dos_contextos(contextos, indice_imagens)
+                    imagens = (
+                        []
+                        if veio_da_wikipedia
+                        else obter_imagens_dos_contextos(contextos, indice_imagens)
+                    )
                 else:
                     prompt = build_prompt(
                         contextos, pergunta, historico=st.session_state.historico[:-1]
@@ -782,7 +905,11 @@ def main() -> None:
                             f"{meta['source']} (página {meta['page']}, relevância {score:.2f})"
                         )
 
-                    imagens = obter_imagens_dos_contextos(contextos, indice_imagens)
+                    imagens = (
+                        []
+                        if veio_da_wikipedia
+                        else obter_imagens_dos_contextos(contextos, indice_imagens)
+                    )
 
                 registrar_pergunta(pergunta, [m["source"] for _t, m, _s in contextos])
 
