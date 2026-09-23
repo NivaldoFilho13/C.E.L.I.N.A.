@@ -6,6 +6,8 @@ from text_utils import dividir_em_chunks, limpar_texto
 
 OUTROS_DIR = "outros"
 URLS_FILE = "urls.txt"
+WIKI_FILE = "wikipedia.txt"
+WIKI_LANG_PADRAO = "pt"
 OUT_FILE = "data/documents_outros.jsonl"
 
 LINHAS_POR_BLOCO_PLANILHA = 20
@@ -38,7 +40,6 @@ def extrair_docx(path: str) -> str:
 
 
 def extrair_planilha(path: str) -> list[str]:
-    """Devolve uma lista de linhas formatadas como texto (uma por linha da planilha)."""
     ext = os.path.splitext(path)[1].lower()
     linhas_texto: list[str] = []
 
@@ -83,6 +84,89 @@ def extrair_planilha(path: str) -> list[str]:
         return []
 
     return linhas_texto
+
+
+def extrair_srt(path: str) -> str:
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        linhas = f.readlines()
+
+    falas = []
+    for linha in linhas:
+        linha = linha.strip()
+        if not linha:
+            continue
+        if linha.isdigit():
+            continue
+        if "-->" in linha:
+            continue
+        falas.append(linha)
+
+    return limpar_texto(" ".join(falas))
+
+
+def buscar_titulos_wikipedia(
+    termo: str, lang: str = WIKI_LANG_PADRAO, limite: int = 5
+) -> list[str]:
+    try:
+        import requests
+    except ImportError:
+        print(
+            "  [aviso] biblioteca 'requests' não instalada; pulando busca na Wikipédia."
+        )
+        return []
+
+    try:
+        resp = requests.get(
+            f"https://{lang}.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": termo,
+                "format": "json",
+                "srlimit": limite,
+            },
+            timeout=10,
+            headers={"User-Agent": "Celina/1.0"},
+        )
+        resp.raise_for_status()
+        dados = resp.json()
+        return [item["title"] for item in dados.get("query", {}).get("search", [])]
+    except Exception as e:
+        print(f"  [aviso] busca na Wikipédia falhou: {e}")
+        return []
+
+
+def extrair_wikipedia(titulo: str, lang: str = WIKI_LANG_PADRAO) -> str:
+    try:
+        import requests
+    except ImportError:
+        print("  [aviso] biblioteca 'requests' não instalada; pulando Wikipédia.")
+        return ""
+
+    try:
+        resp = requests.get(
+            f"https://{lang}.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "prop": "extracts",
+                "explaintext": 1,
+                "titles": titulo,
+                "format": "json",
+                "redirects": 1,
+            },
+            timeout=15,
+            headers={"User-Agent": "Celina/1.0"},
+        )
+        resp.raise_for_status()
+        paginas = resp.json().get("query", {}).get("pages", {})
+        for pagina in paginas.values():
+            texto = pagina.get("extract", "")
+            if texto:
+                return limpar_texto(texto)
+    except Exception as e:
+        print(f"  [aviso] não consegui baixar o artigo '{titulo}' da Wikipédia: {e}")
+
+    return ""
 
 
 def extrair_pagina_web(url: str) -> str:
@@ -162,6 +246,10 @@ def processar_pasta_outros(resultados: list[dict]) -> None:
             texto = extrair_txt_md(path)
             if texto:
                 montar_chunks_texto(fname, texto, resultados)
+        elif ext == ".srt":
+            texto = extrair_srt(path)
+            if texto:
+                montar_chunks_texto(fname, texto, resultados)
         elif ext == ".docx":
             texto = extrair_docx(path)
             if texto:
@@ -191,15 +279,35 @@ def processar_urls(resultados: list[dict]) -> None:
             montar_chunks_texto(url, texto, resultados)
 
 
+def processar_wikipedia(resultados: list[dict]) -> None:
+    if not os.path.exists(WIKI_FILE):
+        return
+
+    with open(WIKI_FILE, "r", encoding="utf-8") as f:
+        titulos = [
+            linha.strip()
+            for linha in f
+            if linha.strip() and not linha.strip().startswith("#")
+        ]
+
+    for titulo in titulos:
+        texto = extrair_wikipedia(titulo)
+        if texto:
+            montar_chunks_texto(f"Wikipédia: {titulo}", texto, resultados)
+
+
 def main() -> int:
     os.makedirs("data", exist_ok=True)
 
     resultados: list[dict] = []
     processar_pasta_outros(resultados)
     processar_urls(resultados)
+    processar_wikipedia(resultados)
 
     if not resultados:
-        print(f"Nenhum conteúdo encontrado em '{OUTROS_DIR}/' nem em '{URLS_FILE}'.")
+        print(
+            f"Nenhum conteúdo encontrado em '{OUTROS_DIR}/', '{URLS_FILE}' nem '{WIKI_FILE}'."
+        )
         return 1
 
     with open(OUT_FILE, "w", encoding="utf-8") as f:
