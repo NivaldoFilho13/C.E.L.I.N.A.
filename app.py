@@ -3,6 +3,7 @@ import io
 import json
 import os
 import random
+import re
 import uuid
 import zipfile
 from collections import Counter
@@ -13,6 +14,7 @@ import streamlit as st
 import build_index
 import extract_outros
 import extract_pdfs
+import imagens_web
 from chat import (
     GEN_MODEL_PADRAO,
     LIMIAR_CONFIANCA_PADRAO,
@@ -188,6 +190,7 @@ def salvar_texto_colado(titulo: str, texto: str) -> str:
 
 
 def salvar_titulos_wikipedia(titulos: list[str]) -> int:
+    """Acrescenta títulos de artigos da Wikipédia ao wikipedia.txt, sem duplicar."""
     if not titulos:
         return 0
 
@@ -338,8 +341,68 @@ def buscar_resposta_wikipedia_ao_vivo(pergunta: str, max_chars: int = 3000):
     return [(texto[:max_chars], meta, 1.0)]
 
 
+def buscar_resposta_web_ao_vivo(
+    pergunta: str, max_paginas: int = 2, max_chars_por_pagina: int = 2500
+):
+    urls = extract_outros.buscar_urls_duckduckgo(pergunta, limite=max_paginas)
+    contextos = []
+    for url in urls:
+        texto = extract_outros.extrair_pagina_web(url)
+        if texto:
+            meta = {
+                "source": f"Web: {url} (busca ao vivo, não verificado)",
+                "page": 1,
+                "chunk": 0,
+            }
+            contextos.append((texto[:max_chars_por_pagina], meta, 1.0))
+    return contextos
+
+
+def inserir_imagens_no_quiz(quiz_md: str, fonte: str) -> str:
+    padrao = re.compile(r"^\*\*Imagem:\*\*[ \t]*(.*)$", re.MULTILINE | re.IGNORECASE)
+    encontrou = {"n": 0}
+
+    def trocar(m: re.Match) -> str:
+        encontrou["n"] += 1
+        termo = m.group(1).strip(" .()\"'")
+        if not termo or termo.lower().startswith(("nenhum", "n/a", "sem imagem")):
+            return ""
+        imgs = imagens_web.buscar_imagens(termo, limite=1)
+        return imagens_web.imagem_em_markdown(imgs[0]) if imgs else ""
+
+    resultado = padrao.sub(trocar, quiz_md)
+
+    if encontrou["n"] == 0:
+        nome_fonte = os.path.splitext(fonte)[0]
+        imgs = imagens_web.buscar_imagens(
+            imagens_web.extrair_termo_busca(nome_fonte), limite=1
+        )
+        if imgs:
+            resultado = (
+                imagens_web.imagem_em_markdown(imgs[0]) + "\n\n---\n\n" + resultado
+            )
+
+    return resultado
+
+
+def exibir_imagens_web(imagens: list[dict]) -> None:
+    if not imagens:
+        return
+    cols = st.columns(min(len(imagens), 3))
+    for i, img in enumerate(imagens):
+        with cols[i % len(cols)]:
+            st.image(
+                img["url"], caption=imagens_web.legenda(img), use_container_width=True
+            )
+
+
 def gerar_quiz(
-    gen_bundle, texts: list[str], metas: list[dict], fonte: str, n_perguntas: int = 5
+    gen_bundle,
+    texts: list[str],
+    metas: list[dict],
+    fonte: str,
+    n_perguntas: int = 5,
+    com_imagens: bool = False,
 ) -> str:
     indices_fonte = [i for i, m in enumerate(metas) if m["source"] == fonte]
     indices_fonte.sort(key=lambda i: (metas[i]["page"], metas[i].get("chunk", 0)))
@@ -347,32 +410,96 @@ def gerar_quiz(
     if not indices_fonte:
         return "Não encontrei trechos dessa fonte para gerar o quiz."
 
-    JANELA = min(len(indices_fonte), 8)
+    JANELA = min(len(indices_fonte), 12)
     inicio = random.randint(0, len(indices_fonte) - JANELA)
     janela_indices = indices_fonte[inicio : inicio + JANELA]
     trechos = "\n\n".join(texts[i] for i in janela_indices)
 
+    linha_imagem = (
+        "**Imagem:** (2 a 4 palavras-chave em português para buscar uma foto, "
+        "mapa, gráfico ou diagrama que ilustre a questão; escreva 'nenhuma' "
+        "se não fizer sentido)\n\n"
+        if com_imagens
+        else ""
+    )
+
     prompt = (
-        f"Com base no texto abaixo, crie {n_perguntas} perguntas de múltipla escolha "
-        "para revisar o conteúdo, no mesmo idioma do texto. Cada pergunta deve ser "
-        "AUTOCONTIDA: antes da pergunta em si, escreva 1-2 frases de contexto "
-        "explicando brevemente do que se trata, para que a pergunta faça sentido "
-        "mesmo para quem não leu o texto original. Não faça perguntas vagas ou que "
-        "dependam de saber a que trecho elas se referem.\n\n"
-        "Formate cada pergunta em Markdown exatamente assim:\n\n"
-        "**Pergunta N**\n"
-        "*Contexto:* (1-2 frases de contextualização)\n\n"
-        "(a pergunta em si)\n"
-        "a) ...\nb) ...\nc) ...\nd) ...\n\n"
-        "**Resposta correta:** (letra) — (breve justificativa citando o texto)\n\n"
+        "Você é um elaborador de questões do ENEM (Exame Nacional do Ensino "
+        f"Médio). Com base no texto abaixo, crie {n_perguntas} questões de "
+        "múltipla escolha no ESTILO ENEM, seguindo estas regras obrigatórias:\n\n"
+        "1. Cada questão começa com um TEXTO DE APOIO/CONTEXTUALIZAÇÃO de "
+        "3-5 frases (uma situação-problema, uma citação, um cenário aplicado, "
+        "ou uma síntese do trecho) que situe quem vai responder — nunca "
+        "pergunte um fato isolado sem esse contexto.\n"
+        "2. Depois do texto de apoio, escreva o COMANDO da questão (o que se "
+        "pede), cobrando interpretação, relação de causa-efeito ou aplicação "
+        "do conteúdo — não apenas memorização literal de uma frase do texto.\n"
+        "3. Cada questão tem 5 alternativas, de (A) a (E), com APENAS UMA "
+        "correta. As alternativas erradas devem ser plausíveis (erros "
+        "conceituais comuns ou meias-verdades), nunca absurdas ou óbvias.\n"
+        "4. Escreva no mesmo idioma do texto original.\n\n"
+        "Formate cada questão em Markdown exatamente assim:\n\n"
+        "**Questão N**\n\n"
+        f"(texto de apoio/contextualização)\n\n{linha_imagem}"
+        "(comando da questão)\n\n"
+        "(A) ...\n(B) ...\n(C) ...\n(D) ...\n(E) ...\n\n"
+        "**Gabarito:** (letra) — (justificativa breve, explicando também por "
+        "que as principais alternativas erradas não servem)\n\n"
         "---\n\n"
         f"### Texto\n{trechos}"
     )
 
     try:
-        return gerar_resposta(gen_bundle, prompt, max_new_tokens=900)
+        quiz = gerar_resposta(gen_bundle, prompt, max_new_tokens=1500)
     except Exception as e:
         return f"Não consegui gerar o quiz: {e}"
+
+    if com_imagens:
+        quiz = inserir_imagens_no_quiz(quiz, fonte)
+    return quiz
+
+
+def corrigir_redacao(gen_bundle, tema: str, texto_redacao: str) -> str:
+    prompt = (
+        "Você é um corretor de redações do ENEM (Exame Nacional do Ensino "
+        "Médio), avaliando um texto dissertativo-argumentativo. Avalie a "
+        "redação abaixo seguindo os critérios oficiais das 5 competências do "
+        "ENEM, cada uma valendo de 0 a 200 pontos (total de 0 a 1000):\n\n"
+        "- Competência 1: domínio da norma culta da língua escrita (gramática, "
+        "ortografia, pontuação, registro formal).\n"
+        "- Competência 2: compreensão da proposta e desenvolvimento do tema "
+        "dentro da estrutura dissertativo-argumentativa, usando repertório "
+        "sociocultural.\n"
+        "- Competência 3: seleção, organização e interpretação de "
+        "informações, fatos, opiniões e argumentos em defesa de um ponto de "
+        "vista.\n"
+        "- Competência 4: uso de mecanismos linguísticos para construir a "
+        "argumentação (coesão textual, conectivos, articulação entre "
+        "parágrafos).\n"
+        "- Competência 5: proposta de intervenção para o problema abordado, "
+        "detalhada (agente, ação, meio/modo, efeito, finalidade) e que "
+        "respeite os direitos humanos.\n\n"
+        f"Tema da redação: {tema}\n\n"
+        f"### Redação do candidato\n{texto_redacao}\n\n"
+        "Responda em português, em Markdown, EXATAMENTE nesta estrutura:\n\n"
+        "## Competência 1 — Norma culta\n**Nota:** X/200\n(justificativa, "
+        "citando trechos problemáticos se houver)\n\n"
+        "## Competência 2 — Compreensão do tema\n**Nota:** X/200\n"
+        "(justificativa)\n\n"
+        "## Competência 3 — Argumentação\n**Nota:** X/200\n(justificativa)\n\n"
+        "## Competência 4 — Coesão textual\n**Nota:** X/200\n(justificativa)\n\n"
+        "## Competência 5 — Proposta de intervenção\n**Nota:** X/200\n"
+        "(justificativa; se não houver proposta de intervenção, isso deve "
+        "reduzir bastante essa nota)\n\n"
+        "## Nota final\n**X/1000**\n\n"
+        "## Pontos fortes\n(lista com marcadores)\n\n"
+        "## Sugestões de melhoria\n(lista com marcadores, específica e prática)"
+    )
+
+    try:
+        return gerar_resposta(gen_bundle, prompt, max_new_tokens=1600)
+    except Exception as e:
+        return f"Não consegui corrigir a redação: {e}"
 
 
 @st.cache_data
@@ -472,8 +599,8 @@ def aplicar_estilo() -> None:
 
         <div class="celina-hero">
             {logo_html}
-            <div class="celina-hero-title">CELINA</div>
-            <div class="celina-hero-subtitle">Inteligência Artificial · Nivaldo Araújo &copy 2026</div>
+            <div class="celina-hero-title">C.E.L.I.N.A.</div>
+            <div class="celina-hero-subtitle">Inteligência Artificial · Nivaldo Filho &copy; 2026</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -566,7 +693,9 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                     key="busca_wiki_termo",
                 )
                 if st.button(
-                    "Buscar", use_container_width=True, disabled=not termo_busca.strip()
+                    "🔍 Buscar",
+                    use_container_width=True,
+                    disabled=not termo_busca.strip(),
                 ):
                     with st.spinner("Buscando na Wikipédia..."):
                         st.session_state["resultados_wiki"] = (
@@ -674,15 +803,28 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                 value=st.session_state.get("modo_citacao", False),
             )
 
-            st.session_state.wiki_fallback = st.toggle(
-                "Buscar na Wikipédia quando não achar nas fontes locais (usa internet)",
-                value=st.session_state.get("wiki_fallback", False),
-                help="A resposta é gerada a partir de um artigo baixado ao vivo da "
-                "Wikipédia, sem salvá-lo como fonte permanente — fica claro nas "
-                "fontes consultadas que a informação não veio dos seus documentos.",
+            st.session_state.imagens_web = st.toggle(
+                "Trazer imagens da internet nas respostas",
+                value=st.session_state.get("imagens_web", False),
+                help="Busca imagens relacionadas à sua pergunta no Wikimedia Commons "
+                "(grátis, com crédito do autor). Precisa de internet.",
             )
 
-        with st.expander("⚙️ Regras de formato das respostas"):
+            opcoes_fallback = ["Nenhuma", "Wikipédia (grátis)", "Busca na web (grátis)"]
+            padrao_fallback = st.session_state.get("fallback_externo", "Nenhuma")
+            st.session_state.fallback_externo = st.selectbox(
+                "Buscar externamente quando não achar nas fontes locais",
+                opcoes_fallback,
+                index=opcoes_fallback.index(padrao_fallback)
+                if padrao_fallback in opcoes_fallback
+                else 0,
+                help="Wikipédia busca só um artigo. 'Busca na web' pesquisa no "
+                "DuckDuckGo e lê as páginas mais relevantes — bom para temas amplos "
+                "e atuais (geoeconomia, atualidades, temas sociais). Ambas são "
+                "gratuitas, sem precisar de chave de API, mas precisam de internet.",
+            )
+
+        with st.expander("Regras de formato das respostas"):
             texto_regras = st.text_area(
                 "Uma regra por linha (linhas com # são ignoradas):",
                 value=ler_regras_raw(),
@@ -700,17 +842,89 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
                     st.rerun()
 
         if fontes_disponiveis:
-            with st.expander("Gerar quiz de revisão"):
+            with st.expander("Gerar quiz (estilo Enem)"):
                 fonte_quiz = st.selectbox("Fonte", fontes_disponiveis, key="fonte_quiz")
-                if st.button("Gerar quiz", use_container_width=True):
-                    with st.spinner("Gerando perguntas..."):
+                n_perguntas_quiz = st.slider(
+                    "Quantidade de questões", 1, 10, 5, key="n_quiz"
+                )
+                quiz_com_imagens = st.checkbox(
+                    "Ilustrar questões com imagens da internet",
+                    value=True,
+                    key="quiz_imagens",
+                    help="Busca imagens no Wikimedia Commons (grátis). Precisa de internet; "
+                    "sem conexão, o quiz sai normal, só sem imagens.",
+                )
+                if st.button(
+                    "Gerar quiz", use_container_width=True, key="btn_gerar_quiz"
+                ):
+                    with st.spinner("Gerando questões no estilo Enem..."):
                         quiz = gerar_quiz(
                             st.session_state["_gen_bundle"],
                             st.session_state["_texts"],
                             st.session_state["_metas"],
                             fonte_quiz,
+                            n_perguntas=n_perguntas_quiz,
+                            com_imagens=quiz_com_imagens,
                         )
-                    st.markdown(quiz)
+                    st.session_state.historico.append(
+                        {
+                            "role": "user",
+                            "content": f"🧠 Gerar quiz estilo Enem sobre: {fonte_quiz}",
+                        }
+                    )
+                    st.session_state.historico.append(
+                        {"role": "assistant", "content": quiz}
+                    )
+                    salvar_chat(st.session_state.chat_id, st.session_state.historico)
+                    st.rerun()
+
+        with st.expander("Corrigir redação (estilo Enem)"):
+            gen_bundle_pronto = "_gen_bundle" in st.session_state
+            st.caption(
+                "Correção automática com o modelo local, seguindo as 5 competências "
+                "oficiais do Enem (0 a 200 pontos cada, total até 1000). É um apoio "
+                "de estudo — não substitui a avaliação de um professor."
+            )
+            if not gen_bundle_pronto:
+                st.caption(
+                    "⚠️ Processe pelo menos uma fonte primeiro para habilitar esta função."
+                )
+
+            tema_redacao = st.text_input(
+                "Tema/proposta da redação",
+                placeholder="ex: Desafios para a valorização de comunidades tradicionais no Brasil",
+                key="tema_redacao",
+                disabled=not gen_bundle_pronto,
+            )
+            texto_redacao = st.text_area(
+                "Cole o texto da redação",
+                height=200,
+                key="texto_redacao",
+                disabled=not gen_bundle_pronto,
+            )
+            if st.button(
+                "Corrigir redação",
+                use_container_width=True,
+                key="btn_corrigir_redacao",
+                disabled=not gen_bundle_pronto
+                or not tema_redacao.strip()
+                or not texto_redacao.strip(),
+            ):
+                with st.spinner("Corrigindo pelas 5 competências do Enem..."):
+                    correcao = corrigir_redacao(
+                        st.session_state["_gen_bundle"], tema_redacao, texto_redacao
+                    )
+                st.session_state.historico.append(
+                    {
+                        "role": "user",
+                        "content": f"Corrigir redação — Tema: {tema_redacao}\n\n{texto_redacao}",
+                    }
+                )
+                st.session_state.historico.append(
+                    {"role": "assistant", "content": correcao}
+                )
+                salvar_chat(st.session_state.chat_id, st.session_state.historico)
+                st.rerun()
 
         with st.expander("Estatísticas"):
             stats = carregar_estatisticas()
@@ -727,7 +941,7 @@ def renderizar_sidebar(fontes_disponiveis: list[str]) -> None:
             if st.button("Gerar arquivo de backup", use_container_width=True):
                 dados_zip = gerar_zip_backup()
                 st.download_button(
-                    "⬇ Baixar backup.zip",
+                    "⬇Baixar backup.zip",
                     data=dados_zip,
                     file_name=f"celina_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
                     mime="application/zip",
@@ -761,7 +975,7 @@ def main() -> None:
     except SystemExit:
         renderizar_sidebar([])
         st.info(
-            "Nenhuma fonte indexada ainda. Use **Enviar fontes**, na barra "
+            "Nenhuma fonte indexada ainda. Use **📄 Enviar fontes**, na barra "
             "lateral, para enviar PDFs, textos, planilhas ou links e criar o índice de busca."
         )
         return
@@ -775,7 +989,6 @@ def main() -> None:
 
     fonte_filtro = st.session_state.get("fonte_filtro")
     modo_citacao = st.session_state.get("modo_citacao", False)
-
     for idx, msg in enumerate(st.session_state.historico):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -784,6 +997,7 @@ def main() -> None:
                 for i, caminho in enumerate(msg["imagens"]):
                     with cols[i % len(cols)]:
                         st.image(caminho, use_container_width=True)
+            exibir_imagens_web(msg.get("imagens_web", []))
             if msg.get("fontes"):
                 with st.expander("Fontes consultadas"):
                     for fonte in msg["fontes"]:
@@ -857,63 +1071,104 @@ def main() -> None:
                     k=TOP_K,
                     fonte_filtro=fonte_filtro,
                 )
-                veio_da_wikipedia = False
-
-                if not contextos or melhor_score(contextos) < LIMIAR_CONFIANCA_PADRAO:
-                    if st.session_state.get("wiki_fallback", False):
-                        contextos_wiki = buscar_resposta_wikipedia_ao_vivo(pergunta)
-                        if contextos_wiki:
-                            contextos = contextos_wiki
-                            veio_da_wikipedia = True
-
-                sem_resultado = not contextos or (
-                    not veio_da_wikipedia
-                    and melhor_score(contextos) < LIMIAR_CONFIANCA_PADRAO
+                usar_local = (
+                    bool(contextos)
+                    and melhor_score(contextos) >= LIMIAR_CONFIANCA_PADRAO
                 )
 
-                if sem_resultado:
-                    resposta = (
-                        "Não encontrei nada relevante o bastante nas fontes indexadas."
-                    )
-                    fontes = []
-                    imagens = []
-                elif modo_citacao:
-                    resposta = resposta_somente_citacao(contextos)
-                    fontes = formatar_fontes(contextos).split("\n")
-                    imagens = (
-                        []
-                        if veio_da_wikipedia
-                        else obter_imagens_dos_contextos(contextos, indice_imagens)
-                    )
-                else:
-                    prompt = build_prompt(
-                        contextos, pergunta, historico=st.session_state.historico[:-1]
-                    )
-                    try:
-                        resposta = gerar_resposta(gen_bundle, prompt)
-                    except Exception as e:
-                        resposta = f"Tive um problema ao gerar a resposta: {e}"
+                resposta = None
+                fontes: list[str] = []
+                imagens: list[str] = []
 
-                    vistos = set()
-                    fontes = []
-                    for _texto, meta, score in contextos:
-                        chave = (meta["source"], meta["page"])
-                        if chave in vistos:
-                            continue
-                        vistos.add(chave)
-                        fontes.append(
-                            f"{meta['source']} (página {meta['page']}, relevância {score:.2f})"
+                if usar_local:
+                    if modo_citacao:
+                        resposta = resposta_somente_citacao(contextos)
+                        fontes = formatar_fontes(contextos).split("\n")
+                    else:
+                        prompt = build_prompt(
+                            contextos,
+                            pergunta,
+                            historico=st.session_state.historico[:-1],
                         )
+                        try:
+                            resposta = gerar_resposta(gen_bundle, prompt)
+                        except Exception as e:
+                            resposta = f"Tive um problema ao gerar a resposta: {e}"
 
-                    imagens = (
-                        []
-                        if veio_da_wikipedia
-                        else obter_imagens_dos_contextos(contextos, indice_imagens)
-                    )
+                        vistos = set()
+                        for _texto, meta, score in contextos:
+                            chave = (meta["source"], meta["page"])
+                            if chave in vistos:
+                                continue
+                            vistos.add(chave)
+                            fontes.append(
+                                f"{meta['source']} (página {meta['page']}, relevância {score:.2f})"
+                            )
 
-                registrar_pergunta(pergunta, [m["source"] for _t, m, _s in contextos])
+                    imagens = obter_imagens_dos_contextos(contextos, indice_imagens)
+                    fontes_para_stats = [m["source"] for _t, m, _s in contextos]
+
+                else:
+                    modo_fallback = st.session_state.get("fallback_externo", "Nenhuma")
+                    fontes_para_stats = []
+
+                    if modo_fallback.startswith("Wikipédia"):
+                        contextos_wiki = buscar_resposta_wikipedia_ao_vivo(pergunta)
+                        if contextos_wiki:
+                            if modo_citacao:
+                                resposta = resposta_somente_citacao(contextos_wiki)
+                                fontes = formatar_fontes(contextos_wiki).split("\n")
+                            else:
+                                prompt = build_prompt(
+                                    contextos_wiki,
+                                    pergunta,
+                                    historico=st.session_state.historico[:-1],
+                                )
+                                try:
+                                    resposta = gerar_resposta(gen_bundle, prompt)
+                                except Exception as e:
+                                    resposta = (
+                                        f"Tive um problema ao gerar a resposta: {e}"
+                                    )
+                                fontes = [m["source"] for _t, m, _s in contextos_wiki]
+                            fontes_para_stats = fontes
+
+                    elif modo_fallback.startswith("Busca na web"):
+                        contextos_web = buscar_resposta_web_ao_vivo(pergunta)
+                        if contextos_web:
+                            if modo_citacao:
+                                resposta = resposta_somente_citacao(contextos_web)
+                                fontes = formatar_fontes(contextos_web).split("\n")
+                            else:
+                                prompt = build_prompt(
+                                    contextos_web,
+                                    pergunta,
+                                    historico=st.session_state.historico[:-1],
+                                )
+                                try:
+                                    resposta = gerar_resposta(gen_bundle, prompt)
+                                except Exception as e:
+                                    resposta = (
+                                        f"Tive um problema ao gerar a resposta: {e}"
+                                    )
+                                fontes = [m["source"] for _t, m, _s in contextos_web]
+                            fontes_para_stats = fontes
+
+                    if resposta is None:
+                        resposta = "Não encontrei nada relevante o bastante nas fontes indexadas."
+
+                registrar_pergunta(pergunta, fontes_para_stats)
+
+                imagens_da_web: list[dict] = []
+                resposta_valida = not resposta.startswith(
+                    ("Não encontrei", "Tive um problema")
+                )
+                if st.session_state.get("imagens_web", False) and resposta_valida:
+                    termo_img = imagens_web.extrair_termo_busca(pergunta)
+                    imagens_da_web = imagens_web.buscar_imagens(termo_img, limite=2)
 
             st.markdown(resposta)
+            exibir_imagens_web(imagens_da_web)
             if imagens:
                 cols = st.columns(min(len(imagens), 3))
                 for i, caminho in enumerate(imagens):
@@ -930,6 +1185,7 @@ def main() -> None:
                 "content": resposta,
                 "fontes": fontes,
                 "imagens": imagens,
+                "imagens_web": imagens_da_web,
             }
         )
 
