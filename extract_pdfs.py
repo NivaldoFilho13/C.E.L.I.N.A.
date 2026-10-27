@@ -1,186 +1,365 @@
-import io
 import json
 import os
 import sys
 
-from pypdf import PdfReader
-from tqdm import tqdm
-
 from text_utils import dividir_em_chunks, limpar_texto
 
-PDF_DIR = "pdfs"
-OUT_FILE = "data/documents.jsonl"
-IMAGES_DIR = "data/images"
-IMAGES_INDEX_FILE = "data/images_index.json"
+OUTROS_DIR = "outros"
+URLS_FILE = "urls.txt"
+WIKI_FILE = "wikipedia.txt"
+WIKI_LANG_PADRAO = "pt"
+OUT_FILE = "data/documents_outros.jsonl"
 
-IMAGEM_TAMANHO_MINIMO = 120
-
-try:
-    import fitz  # PyMuPDF
-    import pytesseract
-    from PIL import Image
-
-    OCR_DISPONIVEL = True
-except ImportError:
-    OCR_DISPONIVEL = False
-
-OCR_DPI = 200
-OCR_IDIOMA = "por"
-_ocr_avisado = False
+LINHAS_POR_BLOCO_PLANILHA = 20
 
 
-def ocr_pagina(caminho_pdf: str, page_num_idx: int) -> str:
-    global _ocr_avisado
-    if not OCR_DISPONIVEL:
-        if not _ocr_avisado:
-            print(
-                "  [aviso] OCR não disponível (falta 'PyMuPDF'/'pytesseract'/Tesseract-OCR). "
-                "Páginas sem texto selecionável serão puladas. Veja o README, seção OCR."
-            )
-            _ocr_avisado = True
+def extrair_txt_md(path: str) -> str:
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        texto = f.read()
+    return limpar_texto(texto)
+
+
+def extrair_docx(path: str) -> str:
+    try:
+        import docx
+    except ImportError:
+        print(
+            "  [aviso] biblioteca 'python-docx' não instalada; pulando "
+            f"'{path}'. Rode: pip install python-docx"
+        )
         return ""
 
     try:
-        doc = fitz.open(caminho_pdf)
-        pagina = doc[page_num_idx]
-        pix = pagina.get_pixmap(dpi=OCR_DPI)
-        img = Image.open(io.BytesIO(pix.tobytes("png")))
-        texto = pytesseract.image_to_string(img, lang=OCR_IDIOMA)
-        doc.close()
-        return texto
-    except Exception as e:
-        if not _ocr_avisado:
-            print(
-                f"  [aviso] OCR falhou ({e}). Verifique se o Tesseract-OCR está instalado e no PATH."
-            )
-            _ocr_avisado = True
-        return ""
-
-
-def extrair_imagens_da_pagina(
-    page, nome_base: str, page_num: int, out_dir: str
-) -> list[str]:
-    caminhos: list[str] = []
-    try:
-        imagens = page.images
-    except Exception:
-        return caminhos
-
-    for idx, img in enumerate(imagens):
-        try:
-            pil_img = img.image  # objeto PIL.Image (lazy)
-            largura, altura = pil_img.size
-            if largura < IMAGEM_TAMANHO_MINIMO or altura < IMAGEM_TAMANHO_MINIMO:
-                continue
-
-            ext = os.path.splitext(img.name)[1].lower() or ".png"
-            if ext not in (".png", ".jpg", ".jpeg"):
-                ext = ".png"
-            nome_arquivo = f"{nome_base}_p{page_num}_{idx}{ext}"
-            caminho = os.path.join(out_dir, nome_arquivo)
-            pil_img.save(caminho)
-            caminhos.append(caminho)
-        except Exception:
-            continue
-
-    return caminhos
-
-
-def extract_from_pdf(path: str, images_dir: str) -> tuple[list[dict], dict]:
-    try:
-        reader = PdfReader(path)
+        documento = docx.Document(path)
     except Exception as e:
         print(f"  [aviso] não consegui abrir '{path}': {e}")
-        return [], {}
+        return ""
 
-    nome_arquivo = os.path.basename(path)
-    nome_base = os.path.splitext(nome_arquivo)[0]
+    texto = "\n".join(p.text for p in documento.paragraphs)
+    return limpar_texto(texto)
 
-    resultados = []
-    indice_imagens: dict[str, list[str]] = {}
 
-    for i, page in enumerate(reader.pages):
-        page_num = i + 1
+def extrair_planilha(path: str) -> list[str]:
+    ext = os.path.splitext(path)[1].lower()
+    linhas_texto: list[str] = []
 
-        try:
-            texto_bruto = page.extract_text() or ""
-        except Exception as e:
-            print(
-                f"  [aviso] erro extraindo texto da página {page_num} de '{path}': {e}"
-            )
-            texto_bruto = ""
+    try:
+        if ext == ".csv":
+            import csv
 
-        texto = limpar_texto(texto_bruto)
-
-        if not texto:
-            texto_ocr = ocr_pagina(path, i)
-            texto = limpar_texto(texto_ocr)
-
-        if texto:
-            for j, chunk in enumerate(dividir_em_chunks(texto)):
-                if len(chunk) < 20:
-                    continue
-                resultados.append(
-                    {
-                        "source": nome_arquivo,
-                        "page": page_num,
-                        "chunk": j,
-                        "text": chunk,
-                    }
+            with open(path, "r", encoding="utf-8", errors="ignore", newline="") as f:
+                leitor = csv.reader(f)
+                cabecalho = next(leitor, None)
+                for linha in leitor:
+                    if cabecalho:
+                        pares = [f"{c}: {v}" for c, v in zip(cabecalho, linha)]
+                    else:
+                        pares = linha
+                    if pares:
+                        linhas_texto.append(" | ".join(pares))
+        else:
+            try:
+                from openpyxl import load_workbook
+            except ImportError:
+                print(
+                    "  [aviso] biblioteca 'openpyxl' não instalada; pulando "
+                    f"'{path}'. Rode: pip install openpyxl"
                 )
+                return []
 
-        caminhos_imagens = extrair_imagens_da_pagina(
-            page, nome_base, page_num, images_dir
+            wb = load_workbook(path, read_only=True, data_only=True)
+            for aba in wb.worksheets:
+                linhas = list(aba.iter_rows(values_only=True))
+                if not linhas:
+                    continue
+                cabecalho = linhas[0]
+                for linha in linhas[1:]:
+                    pares = [
+                        f"{c}: {v}" for c, v in zip(cabecalho, linha) if v is not None
+                    ]
+                    if pares:
+                        linhas_texto.append(" | ".join(pares))
+    except Exception as e:
+        print(f"  [aviso] erro lendo planilha '{path}': {e}")
+        return []
+
+    return linhas_texto
+
+
+def extrair_srt(path: str) -> str:
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        linhas = f.readlines()
+
+    falas = []
+    for linha in linhas:
+        linha = linha.strip()
+        if not linha:
+            continue
+        if linha.isdigit():
+            continue
+        if "-->" in linha:
+            continue
+        falas.append(linha)
+
+    return limpar_texto(" ".join(falas))
+
+
+def buscar_titulos_wikipedia(
+    termo: str, lang: str = WIKI_LANG_PADRAO, limite: int = 5
+) -> list[str]:
+    try:
+        import requests
+    except ImportError:
+        print(
+            "  [aviso] biblioteca 'requests' não instalada; pulando busca na Wikipédia."
         )
-        if caminhos_imagens:
-            chave = f"{nome_arquivo}::{page_num}"
-            indice_imagens[chave] = caminhos_imagens
+        return []
 
-    return resultados, indice_imagens
+    try:
+        resp = requests.get(
+            f"https://{lang}.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": termo,
+                "format": "json",
+                "srlimit": limite,
+            },
+            timeout=10,
+            headers={"User-Agent": "Celina/1.0"},
+        )
+        resp.raise_for_status()
+        dados = resp.json()
+        return [item["title"] for item in dados.get("query", {}).get("search", [])]
+    except Exception as e:
+        print(f"  [aviso] busca na Wikipédia falhou: {e}")
+        return []
+
+
+def extrair_wikipedia(titulo: str, lang: str = WIKI_LANG_PADRAO) -> str:
+    try:
+        import requests
+    except ImportError:
+        print("  [aviso] biblioteca 'requests' não instalada; pulando Wikipédia.")
+        return ""
+
+    try:
+        resp = requests.get(
+            f"https://{lang}.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "prop": "extracts",
+                "explaintext": 1,
+                "titles": titulo,
+                "format": "json",
+                "redirects": 1,
+            },
+            timeout=15,
+            headers={"User-Agent": "Celina/1.0"},
+        )
+        resp.raise_for_status()
+        paginas = resp.json().get("query", {}).get("pages", {})
+        for pagina in paginas.values():
+            texto = pagina.get("extract", "")
+            if texto:
+                return limpar_texto(texto)
+    except Exception as e:
+        print(f"  [aviso] não consegui baixar o artigo '{titulo}' da Wikipédia: {e}")
+
+    return ""
+
+
+def buscar_urls_duckduckgo(query: str, limite: int = 3) -> list[str]:
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+    except ImportError:
+        print(
+            "  [aviso] bibliotecas 'requests'/'beautifulsoup4' não instaladas; "
+            "pulando busca na web."
+        )
+        return []
+
+    try:
+        resp = requests.post(
+            "https://html.duckduckgo.com/html/",
+            data={"q": query},
+            timeout=10,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"  [aviso] busca na web falhou: {e}")
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    urls = []
+    for link in soup.select("a.result__a")[:limite]:
+        href = link.get("href")
+        if href:
+            urls.append(_resolver_url_duckduckgo(href))
+    return urls
+
+
+def _resolver_url_duckduckgo(href: str) -> str:
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    if "uddg=" in href:
+        qs = parse_qs(urlparse(href).query)
+        alvo = qs.get("uddg")
+        if alvo:
+            return unquote(alvo[0])
+    return href
+
+
+def extrair_pagina_web(url: str) -> str:
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+    except ImportError:
+        print(
+            "  [aviso] bibliotecas 'requests'/'beautifulsoup4' não instaladas; "
+            "pulando URLs. Rode: pip install requests beautifulsoup4"
+        )
+        return ""
+
+    try:
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"  [aviso] não consegui baixar '{url}': {e}")
+        return ""
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header", "noscript"]):
+        tag.decompose()
+
+    texto = soup.get_text(separator=" ")
+    return limpar_texto(texto)
+
+
+def montar_chunks_texto(source_name: str, texto: str, resultados: list[dict]) -> None:
+    for i, chunk in enumerate(dividir_em_chunks(texto)):
+        if len(chunk) < 20:
+            continue
+        resultados.append({"source": source_name, "page": 1, "chunk": i, "text": chunk})
+
+
+def montar_chunks_planilha(
+    source_name: str, linhas: list[str], resultados: list[dict]
+) -> None:
+    bloco: list[str] = []
+    bloco_num = 0
+    for linha in linhas:
+        bloco.append(linha)
+        if len(bloco) >= LINHAS_POR_BLOCO_PLANILHA:
+            bloco_num += 1
+            resultados.append(
+                {
+                    "source": source_name,
+                    "page": bloco_num,
+                    "chunk": 0,
+                    "text": "\n".join(bloco),
+                }
+            )
+            bloco = []
+    if bloco:
+        bloco_num += 1
+        resultados.append(
+            {
+                "source": source_name,
+                "page": bloco_num,
+                "chunk": 0,
+                "text": "\n".join(bloco),
+            }
+        )
+
+
+def processar_pasta_outros(resultados: list[dict]) -> None:
+    if not os.path.isdir(OUTROS_DIR):
+        return
+
+    for fname in sorted(os.listdir(OUTROS_DIR)):
+        path = os.path.join(OUTROS_DIR, fname)
+        if not os.path.isfile(path):
+            continue
+        ext = os.path.splitext(fname)[1].lower()
+
+        if ext in (".txt", ".md"):
+            texto = extrair_txt_md(path)
+            if texto:
+                montar_chunks_texto(fname, texto, resultados)
+        elif ext == ".srt":
+            texto = extrair_srt(path)
+            if texto:
+                montar_chunks_texto(fname, texto, resultados)
+        elif ext == ".docx":
+            texto = extrair_docx(path)
+            if texto:
+                montar_chunks_texto(fname, texto, resultados)
+        elif ext in (".csv", ".xlsx"):
+            linhas = extrair_planilha(path)
+            if linhas:
+                montar_chunks_planilha(fname, linhas, resultados)
+        else:
+            print(f"  [aviso] formato '{ext}' não suportado, ignorando '{fname}'.")
+
+
+def processar_urls(resultados: list[dict]) -> None:
+    if not os.path.exists(URLS_FILE):
+        return
+
+    with open(URLS_FILE, "r", encoding="utf-8") as f:
+        urls = [
+            linha.strip()
+            for linha in f
+            if linha.strip() and not linha.strip().startswith("#")
+        ]
+
+    for url in urls:
+        texto = extrair_pagina_web(url)
+        if texto:
+            montar_chunks_texto(url, texto, resultados)
+
+
+def processar_wikipedia(resultados: list[dict]) -> None:
+    if not os.path.exists(WIKI_FILE):
+        return
+
+    with open(WIKI_FILE, "r", encoding="utf-8") as f:
+        titulos = [
+            linha.strip()
+            for linha in f
+            if linha.strip() and not linha.strip().startswith("#")
+        ]
+
+    for titulo in titulos:
+        texto = extrair_wikipedia(titulo)
+        if texto:
+            montar_chunks_texto(f"Wikipédia: {titulo}", texto, resultados)
 
 
 def main() -> int:
     os.makedirs("data", exist_ok=True)
-    os.makedirs(IMAGES_DIR, exist_ok=True)
 
-    if not os.path.isdir(PDF_DIR):
-        print(f"ERRO: pasta '{PDF_DIR}/' não existe. Crie-a e coloque seus PDFs lá.")
-        return 1
+    resultados: list[dict] = []
+    processar_pasta_outros(resultados)
+    processar_urls(resultados)
+    processar_wikipedia(resultados)
 
-    arquivos_pdf = sorted(f for f in os.listdir(PDF_DIR) if f.lower().endswith(".pdf"))
-    if not arquivos_pdf:
-        print(f"ERRO: nenhum arquivo .pdf encontrado em '{PDF_DIR}/'.")
-        return 1
-
-    all_docs: list[dict] = []
-    all_images: dict[str, list[str]] = {}
-
-    for fname in tqdm(arquivos_pdf, desc="Processando PDFs"):
-        path = os.path.join(PDF_DIR, fname)
-        docs, imagens = extract_from_pdf(path, IMAGES_DIR)
-        all_docs.extend(docs)
-        all_images.update(imagens)
-
-    if not all_docs:
+    if not resultados:
         print(
-            "AVISO: nenhum texto foi extraído de nenhum PDF, mesmo com OCR. "
-            "Verifique se os PDFs realmente têm conteúdo, ou se o Tesseract-OCR "
-            "está instalado corretamente (veja o README, seção OCR)."
+            f"Nenhum conteúdo encontrado em '{OUTROS_DIR}/', '{URLS_FILE}' nem '{WIKI_FILE}'."
         )
         return 1
 
     with open(OUT_FILE, "w", encoding="utf-8") as f:
-        for d in all_docs:
+        for d in resultados:
             f.write(json.dumps(d, ensure_ascii=False) + "\n")
 
-    with open(IMAGES_INDEX_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_images, f, ensure_ascii=False, indent=2)
-
-    fontes = {d["source"] for d in all_docs}
-    total_imagens = sum(len(v) for v in all_images.values())
-    print(f"\nExtraídos {len(all_docs)} blocos de {len(fontes)} PDF(s) para {OUT_FILE}")
+    fontes = {d["source"] for d in resultados}
     print(
-        f"Extraídas {total_imagens} imagens ilustrativas para {IMAGES_DIR}/ ({IMAGES_INDEX_FILE})"
+        f"Extraídos {len(resultados)} blocos de {len(fontes)} fonte(s) para {OUT_FILE}"
     )
     return 0
 
