@@ -57,7 +57,7 @@ def extrair_planilha(path: str) -> list[str]:
                         pares = linha
                     if pares:
                         linhas_texto.append(" | ".join(pares))
-        else:
+        else:  # .xlsx
             try:
                 from openpyxl import load_workbook
             except ImportError:
@@ -167,6 +167,49 @@ def extrair_wikipedia(titulo: str, lang: str = WIKI_LANG_PADRAO) -> str:
         print(f"  [aviso] não consegui baixar o artigo '{titulo}' da Wikipédia: {e}")
 
     return ""
+
+
+def buscar_urls_duckduckgo(query: str, limite: int = 3) -> list[str]:
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+    except ImportError:
+        print(
+            "  [aviso] bibliotecas 'requests'/'beautifulsoup4' não instaladas; "
+            "pulando busca na web."
+        )
+        return []
+
+    try:
+        resp = requests.post(
+            "https://html.duckduckgo.com/html/",
+            data={"q": query},
+            timeout=10,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"  [aviso] busca na web falhou: {e}")
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    urls = []
+    for link in soup.select("a.result__a")[:limite]:
+        href = link.get("href")
+        if href:
+            urls.append(_resolver_url_duckduckgo(href))
+    return urls
+
+
+def _resolver_url_duckduckgo(href: str) -> str:
+    from urllib.parse import parse_qs, unquote, urlparse
+
+    if "uddg=" in href:
+        qs = parse_qs(urlparse(href).query)
+        alvo = qs.get("uddg")
+        if alvo:
+            return unquote(alvo[0])
+    return href
 
 
 def extrair_pagina_web(url: str) -> str:
