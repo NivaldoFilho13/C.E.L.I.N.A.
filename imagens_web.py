@@ -1,9 +1,9 @@
 import re
 from urllib.parse import quote
-
+ 
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 MIMES_ACEITOS = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"}
-LARGURA_MINIMA = 200
+LARGURA_MINIMA = 200  
 
 _STOPWORDS = {
     "a",
@@ -163,10 +163,10 @@ def legenda(img: dict) -> str:
 
 
 def imagem_em_markdown(img: dict) -> str:
-    alt = re.sub(r"[\[\]()]", "", img["titulo"])
+    autor_limpo = re.sub(r'[\[\]()]', '', str(img['autor']))
     url = quote(img["url"], safe=":/?&=%#")
     pagina = quote(img["pagina"], safe=":/?&=%#") if img["pagina"] else ""
-    credito = f"*Imagem: {re.sub(r'[\[\]()]', '', img['autor'])} ({img['licenca']}), Wikimedia Commons*"
+    credito = f"*Imagem: {autor_limpo} ({img['licenca']}), Wikimedia Commons*"
     if pagina:
         credito = f"[{credito}]({pagina})"
-    return f"![{alt}]({url})\n\n{credito}"
+    return f"![{autor_limpo}]({url})\n\n{credito}"
