@@ -12,7 +12,7 @@ Resumo rápido
 - Rode `python build_index.py` → cria `data/index.faiss` e `data/docs.pkl`.
 - Rode `python chat.py` (terminal) ou `streamlit run app.py` (interface web).
 - Ou dê um duplo clique em `iniciar_celina.bat` para um menu com tudo isso.
-- Ou, mais fácil ainda: pela própria interface web, use **📄 Enviar fontes**
+- Ou, mais fácil ainda: pela própria interface web, use **Enviar fontes**
   na barra lateral (arquivo, link ou texto colado) — não precisa nem abrir
   o terminal.
 
@@ -60,14 +60,14 @@ relevante para responder à pergunta.
   tema de cores (roxo/azul escuro) aplicados na interface web — veja
   `assets/` e `.streamlit/config.toml`.
 - **Múltiplas conversas**: a interface web agora tem uma barra lateral com
-  "➕ Novo chat" e a lista de conversas salvas anteriormente — clique numa
-  para reabri-la, ou no 🗑️ para apagá-la. Cada conversa é salva em
+  "Novo chat" e a lista de conversas salvas anteriormente — clique numa
+  para reabri-la, ou no para apagá-la. Cada conversa é salva em
   `data/chats/` e sobrevive mesmo se você fechar o navegador ou o terminal.
 - **Múltiplas fontes de conteúdo**: além de PDF, a Celina agora lê texto
   (.txt/.md), Word (.docx), planilhas (.csv/.xlsx) e páginas da web — veja
   a tabela "Fontes suportadas" no topo deste arquivo.
 - **Envio de fontes pela interface**: não precisa mais rodar scripts no
-  terminal — na barra lateral, "📄 Enviar fontes" tem 4 abas (arquivo,
+  terminal — na barra lateral, "Enviar fontes" tem 4 abas (arquivo,
   link, Wikipédia, colar texto). A Celina extrai o conteúdo e reconstrói o
   índice de busca sozinha.
 - **Imagens ilustrativas**: `extract_pdfs.py` agora também extrai as
@@ -84,7 +84,7 @@ relevante para responder à pergunta.
 - **Threshold de confiança**: se a busca não encontrar nada realmente
   relevante, a Celina admite que não sabe em vez de forçar uma resposta
   fraca.
-- **Modo "só citação"**: ative em ⚙️ Configurações da busca para receber o
+- **Modo "só citação"**: ative em Configurações da busca para receber o
   trecho original tal como está no documento, sem reescrita — útil quando
   a fidelidade exata ao texto importa.
 - **Filtro por fonte**: restrinja a busca a um único PDF/arquivo/link
@@ -104,25 +104,61 @@ relevante para responder à pergunta.
 - **Gerador de quiz**: escolha uma fonte na barra lateral e gere 5
   perguntas de múltipla escolha pra revisar o conteúdo.
 
-- **Wikipédia como fonte**: na aba "Wikipédia" (dentro de "📄 Enviar
+- **Wikipédia como fonte**: na aba "Wikipédia" (dentro de "Enviar
   fontes"), busque um termo, escolha os artigos encontrados e adicione-os
   permanentemente ao índice — igual a qualquer outra fonte.
 - **Busca ao vivo na Wikipédia**: ative "Buscar na Wikipédia quando não
-  achar nas fontes locais" em ⚙️ Configurações da busca — quando suas
+  achar nas fontes locais" em Configurações da busca — quando suas
   fontes locais não tiverem a resposta, a Celina busca ao vivo (precisa de
   internet) e deixa claro na fonte que a informação veio de fora dos seus
   documentos, não salvando nada automaticamente.
+- **Busca ao vivo na web (grátis)**: alternativa à Wikipédia, pesquisa no
+  DuckDuckGo e lê as páginas mais relevantes — bom para temas amplos e
+  atuais (geoeconomia, atualidades, temas sociais). Sem chave de API, sem
+  custo — só precisa de internet.
 - **Gerador de quiz melhorado**: as perguntas agora são geradas a partir de
   uma janela contínua de trechos (na ordem original do documento, não mais
   espalhados aleatoriamente), e cada pergunta vem com 1-2 frases de
   contexto antes dela — pra fazer sentido mesmo sem ter lido o texto
   original.
 
+- **Quiz estilo Enem**: as questões seguem o formato da prova — texto de
+  apoio de 3-5 frases antes de cada questão, comando que cobra interpretação
+  (não decoreba), 5 alternativas (A a E) com distratores plausíveis, e
+  gabarito comentado. Você escolhe a fonte e quantas questões (1 a 10), e o
+  quiz fica salvo na conversa.
+- **Corretor de redação (Enem)**: em "Corrigir redação", informe o tema e
+  cole o texto; a Celina avalia pelas 5 competências oficiais (0 a 200 cada,
+  total até 1000), com justificativa por competência, pontos fortes e
+  sugestões de melhoria. O resultado também fica salvo na conversa.
+
+- **Imagens da internet**: a Celina pode trazer imagens reais para ilustrar
+  respostas e questões. Fonte: Wikimedia Commons (grátis, sem chave de API;
+  as imagens têm licença aberta e o crédito do autor aparece junto).
+  - *No chat*: ative "Trazer imagens da internet nas respostas" em ⚙️
+    Configurações da busca. Ela extrai palavras-chave da sua pergunta e
+    mostra até 2 imagens abaixo da resposta.
+  - *No quiz*: marque "Ilustrar questões com imagens da internet" (vem
+    marcado por padrão). O modelo sugere palavras-chave de busca para cada
+    questão e a imagem encontrada é inserida logo após o texto de apoio.
+  - Precisa de internet. Sem conexão (ou se nada for encontrado), a resposta
+    e o quiz saem normais, só sem imagens.
+  - Os resultados vêm de uma busca por palavras-chave no acervo do Commons,
+    então nem sempre a imagem é perfeita para o tema — confira antes de
+    usar numa prova ou trabalho.
+
+> **Atenção sobre a qualidade:** quiz e correção rodam no modelo local
+> (padrão 1.5B), que é pequeno. As questões podem sair imperfeitas e as notas
+> de redação são uma estimativa de apoio ao estudo, não equivalem à avaliação
+> de um corretor humano. Para resultados melhores, escolha o modelo maior em
+> Configurações da busca (mais lento). O corretor só fica disponível depois
+> que pelo menos uma fonte foi processada, porque usa o mesmo modelo carregado.
+
 Requisitos
 - Python 3.8+
 - (Opcional) Virtualenv/venv
 - Internet na primeira execução para baixar modelos, e para as fontes que
-  buscam da web (links, Wikipédia)
+  buscam da web (links, Wikipédia, busca na web)
 
 ## OCR (PDFs escaneados)
 
@@ -171,6 +207,7 @@ Estrutura dos arquivos
 - `text_utils.py` — limpeza e divisão de texto em chunks (compartilhado).
 - `extract_pdfs.py` — extrai texto/imagens dos PDFs (com OCR de apoio).
 - `extract_outros.py` — extrai texto, Word, planilhas e páginas da web.
+- `imagens_web.py` — busca de imagens na internet (Wikimedia Commons).
 - `build_index.py` — gera embeddings e cria o índice FAISS.
 - `chat.py` — funções principais do chat (busca, prompt, geração) e o
   loop de terminal.
@@ -266,8 +303,8 @@ Essas regras são recarregadas a cada pergunta — você pode editar o arquivo
 e testar na hora, sem reiniciar `chat.py` nem o Streamlit.
 
 **Editar pela interface web:** na barra lateral do `app.py`, abra
-"⚙️ Regras de formato das respostas" — dá pra editar o texto ali mesmo e
-clicar em "💾 Salvar" (ou "↺ Padrão" para restaurar as regras originais),
+"Regras de formato das respostas" — dá pra editar o texto ali mesmo e
+clicar em "Salvar" (ou "↺ Padrão" para restaurar as regras originais),
 sem precisar abrir nenhum editor de texto separado.
 
 ## Identidade visual
